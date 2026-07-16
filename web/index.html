@@ -144,6 +144,12 @@
   .why pre .c{color:var(--faint)}
   .why pre .hl{color:var(--blue);font-weight:600}
   .fine{margin-top:14px;font-size:12px;color:var(--faint);max-width:70ch}
+  details.fine summary{cursor:pointer;font:500 10.5px var(--mono);letter-spacing:.1em;
+                       text-transform:uppercase;color:var(--faint);list-style:none}
+  details.fine summary::before{content:"+ "}
+  details.fine[open] summary::before{content:"− "}
+  details.fine[open]{color:var(--dim)}
+  details.fine>summary~*{margin-top:6px}
 </style>
 </head>
 <body>
@@ -176,10 +182,7 @@
 
 <section id="s-mig" class="hidden">
   <div class="sechead"><h2>Model adoption</h2><span class="rule"></span>
-    <span class="hint">live traffic · ranking flipped mid-stream via API</span></div>
-  <p class="lede" style="margin:0 0 16px">Each cell is one live request, labeled with
-  the model that actually served it and the observed latency. The blue bar marks the
-  moment the router's ranking changed.</p>
+    <span class="hint">one cell per live request · blue bar = ranking flipped via API</span></div>
   <div class="mig-lane">
     <div class="lane-head"><b>Pinned</b><span class="models" id="mig-pinned-sub"></span></div>
     <div class="cells" id="mig-pinned"></div>
@@ -211,35 +214,29 @@
 
 <section class="why" id="why-fo">
   <div class="sechead"><h2>The only difference</h2><span class="rule"></span></div>
-  <p>Both lanes run the same <code>agent.py</code> against the same fault. There is no
-  <code>if lane ==</code> anywhere in the client. The difference is the length of one
-  tuple — the routed lane has somewhere else to go.</p>
+  <p>Same <code>agent.py</code>, same fault, no <code>if lane ==</code> anywhere:</p>
 <pre>
-<span class="c"># lanes.py — this is the entire configuration difference</span>
-SINGLE = Lane(candidates=(PRIMARY,))
-ROUTED = Lane(candidates=(PRIMARY, <span class="hl">ALT</span>))
+SINGLE = Lane(candidates=(PRIMARY,))         <span class="c"># nowhere to go → dies</span>
+ROUTED = Lane(candidates=(PRIMARY, <span class="hl">ALT</span>))     <span class="c"># somewhere to go → finishes</span>
 </pre>
-  <p class="fine">This is not a latency benchmark — the routed lane pays for an extra
-  failed request before it fails over, and the only measurement that matters is whether
-  the task finished. The fault is a synthetic 429/timeout/5xx injected by a local proxy,
-  deterministic per run; it says nothing about any provider's real rate limits. Cost
-  figures are rough estimates.</p>
+  <details class="fine"><summary>notes &amp; caveats</summary>
+  Not a latency benchmark — the routed lane pays for an extra failed request before it
+  fails over; the only measurement is whether the task finished. The fault is synthetic
+  (local proxy, deterministic per run) and says nothing about any provider's real rate
+  limits. Cost figures are rough estimates.</details>
 </section>
 
 <section class="why hidden" id="why-ad">
   <div class="sechead"><h2>The only change</h2><span class="rule"></span></div>
-  <p>The client never changed — it kept sending the same request to
-  <code>router:agent-demo-router</code> the whole time. The entire migration is one
-  config write on the platform:</p>
+  <p>The client never changed. The entire migration is one config write:</p>
 <pre>
-<span class="c"># this is everything it took to adopt the new model</span>
 PUT /v2/gen-ai/models/routers/{id}   models: [<span class="hl">"openai-gpt-oss-20b"</span>, "llama3.3-70b-instruct"]
 </pre>
-  <p class="fine">Propagation observed here was ~2 seconds, and rolling back is the same
-  write in reverse. The pinned lane would need a config edit and a redeploy to do either.
-  Latency figures are whatever happened during this run — not a benchmark. The ranking is
-  restored at the end of every run so the demo repeats cleanly. This scenario drives the
-  real DigitalOcean Inference Router; nothing here is simulated except in MOCK mode.</p>
+  <details class="fine"><summary>notes &amp; caveats</summary>
+  Observed propagation ~2s; rollback is the same write in reverse. The pinned lane would
+  need an edit and a redeploy to do either. Latency figures are whatever happened during
+  this run — not a benchmark. The ranking is restored after every run. This drives the
+  real DigitalOcean Inference Router; nothing is simulated except in MOCK mode.</details>
 </section>
 
 <script>
@@ -268,18 +265,13 @@ $("#scen").onclick = e => {
 const COPY = {
   failover: {
     h1: "Same agent, same task, same fault. One finishes, one dies.",
-    lede: `An incident-triage agent (<code>retrieve → summarize → extract</code>)
-      serves the same request in two lanes at once. After each lane's first model call,
-      the primary endpoint starts failing. Left pane: what the user sees. Right pane:
-      what ops sees. The user never sees the failover — that's the point.`,
+    lede: `Two lanes serve the same request while the primary endpoint fails.
+      The user never sees the failover — that's the point.`,
   },
   adoption: {
     h1: "The new model shipped this morning. One lane is already serving it.",
-    lede: `Models ship almost daily now, and everyone wants the newest one — without
-      betting production on it. Same request stream, two lanes: one has its model
-      hard-coded, one calls the DigitalOcean Inference Router. Mid-stream, the router's
-      ranking is reordered through the API. Zero client changes, zero deploys, zero
-      failed requests.`,
+    lede: `Same request stream. Mid-stream, the router's ranking is reordered via
+      the API — watch who serves each request.`,
   },
 };
 function showScen(){
