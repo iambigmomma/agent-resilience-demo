@@ -41,3 +41,10 @@ services:
         # value: set via dashboard / `doctl apps update`, never committed.
         # Without it the app still boots and the MOCK toggle still works --
         # which is the offline fallback if a live key is unavailable on stage.
+      - key: DIGITALOCEAN_API_TOKEN
+        scope: RUN_TIME
+        type: SECRET
+        # Control-plane token, SAME TEAM as the inference key -- a token from a
+        # different team makes the router invisible and every call 404s.
+        # Needed only by the adoption scenario (it reorders the Inference
+        # Router's ranking live). Failover scenario and MOCK work without it.

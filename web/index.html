@@ -92,6 +92,23 @@
   .ops .route{color:var(--blue)} .ops .dim{color:var(--dim)}
   .ops .halt{color:var(--red);font-weight:600}
 
+  /* ---- act 2: adoption cells ---- */
+  .mig-lane{margin-top:18px}
+  .cells{display:flex;gap:8px;flex-wrap:wrap;align-items:stretch}
+  .cell{border:1px solid var(--rule);border-top:3px solid var(--faint);
+        border-radius:2px;padding:7px 12px 8px;min-width:96px}
+  .cell .ri{display:block;font:500 9.5px var(--mono);letter-spacing:.08em;
+            color:var(--faint);text-transform:uppercase;margin-bottom:2px}
+  .cell .mm{font:600 11.5px var(--mono);color:var(--ink)}
+  .cell .ms{display:block;font:400 9.5px var(--mono);color:var(--faint);margin-top:2px}
+  .cell.new{border-top-color:var(--blue)} .cell.new .mm{color:var(--blue)}
+  .cell.bad{border-top-color:var(--red)} .cell.bad .mm{color:var(--red)}
+  .flipbar{width:2px;background:var(--blue);align-self:stretch;margin:0 2px}
+  .miglog{margin-top:16px;font:400 11px/1.8 var(--mono);color:var(--dim)}
+  .miglog .route{color:var(--blue);font-weight:600}
+  .migsum{margin-top:12px;font:600 12px var(--mono)}
+  .migsum b{color:var(--blue)}
+
   /* ---- sections ---- */
   section{margin-top:36px}
   .sechead{display:flex;align-items:baseline;gap:12px;margin-bottom:12px}
@@ -132,14 +149,17 @@
 <body>
 
 <div class="kicker">DigitalOcean Serverless Inference &nbsp;·&nbsp; routing demo</div>
-<h1>Same agent, same task, same fault. One finishes, one dies.</h1>
-<p class="lede">An incident-triage agent (<code>retrieve → summarize → extract</code>)
-serves the same request in two lanes at once. After each lane's first model call, the
-primary endpoint starts failing. Left pane: what the user sees. Right pane: what ops
-sees. The user never sees the failover — that's the point.</p>
+<h1 id="h1"></h1>
+<p class="lede" id="lede"></p>
 
 <div class="controls">
-  <div class="field"><span>fault</span>
+  <div class="field"><span>scenario</span>
+    <div class="seg" id="scen">
+      <button data-v="failover" aria-pressed="true">failover</button>
+      <button data-v="adoption" aria-pressed="false">adoption</button>
+    </div>
+  </div>
+  <div class="field" id="faultfield"><span>fault</span>
     <div class="seg" id="mode">
       <button data-v="429" aria-pressed="true">429</button>
       <button data-v="timeout" aria-pressed="false">timeout</button>
@@ -153,6 +173,24 @@ sees. The user never sees the failover — that's the point.</p>
 </div>
 
 <div id="rows"></div>
+
+<section id="s-mig" class="hidden">
+  <div class="sechead"><h2>Model adoption</h2><span class="rule"></span>
+    <span class="hint">live traffic · ranking flipped mid-stream via API</span></div>
+  <p class="lede" style="margin:0 0 16px">Each cell is one live request, labeled with
+  the model that actually served it and the observed latency. The blue bar marks the
+  moment the router's ranking changed.</p>
+  <div class="mig-lane">
+    <div class="lane-head"><b>Pinned</b><span class="models" id="mig-pinned-sub"></span></div>
+    <div class="cells" id="mig-pinned"></div>
+  </div>
+  <div class="mig-lane">
+    <div class="lane-head"><b>Routed</b><span class="models" id="mig-routed-sub"></span></div>
+    <div class="cells" id="mig-routed"></div>
+  </div>
+  <div class="miglog" id="mig-log"></div>
+  <p class="migsum" id="mig-sum"></p>
+</section>
 
 <section id="s-tl" class="hidden">
   <div class="sechead"><h2>Timeline</h2><span class="rule"></span>
@@ -171,7 +209,7 @@ sees. The user never sees the failover — that's the point.</p>
   <table id="sum"></table>
 </section>
 
-<section class="why">
+<section class="why" id="why-fo">
   <div class="sechead"><h2>The only difference</h2><span class="rule"></span></div>
   <p>Both lanes run the same <code>agent.py</code> against the same fault. There is no
   <code>if lane ==</code> anywhere in the client. The difference is the length of one
@@ -188,6 +226,22 @@ ROUTED = Lane(candidates=(PRIMARY, <span class="hl">ALT</span>))
   figures are rough estimates.</p>
 </section>
 
+<section class="why hidden" id="why-ad">
+  <div class="sechead"><h2>The only change</h2><span class="rule"></span></div>
+  <p>The client never changed — it kept sending the same request to
+  <code>router:agent-demo-router</code> the whole time. The entire migration is one
+  config write on the platform:</p>
+<pre>
+<span class="c"># this is everything it took to adopt the new model</span>
+PUT /v2/gen-ai/models/routers/{id}   models: [<span class="hl">"openai-gpt-oss-20b"</span>, "llama3.3-70b-instruct"]
+</pre>
+  <p class="fine">Propagation observed here was ~2 seconds, and rolling back is the same
+  write in reverse. The pinned lane would need a config edit and a redeploy to do either.
+  Latency figures are whatever happened during this run — not a benchmark. The ranking is
+  restored at the end of every run so the demo repeats cleanly. This scenario drives the
+  real DigitalOcean Inference Router; nothing here is simulated except in MOCK mode.</p>
+</section>
+
 <script>
 "use strict";
 const $ = s => document.querySelector(s);
@@ -196,14 +250,50 @@ const LANES = [
   {name:"routed", title:"Routed",          sub:"primary + alt · llama3.3-70b-instruct → openai-gpt-oss-20b"},
 ];
 const STEPS = ["retrieve","summarize","extract"];
-let mode = "429", es = null, T = null;
+let mode = "429", scen = "failover", es = null, T = null;
 
 $("#mode").onclick = e => {
   const b = e.target.closest("button"); if(!b) return;
   [...$("#mode").children].forEach(x => x.setAttribute("aria-pressed", x===b));
   mode = b.dataset.v;
 };
-$("#run").onclick = start;
+$("#scen").onclick = e => {
+  const b = e.target.closest("button"); if(!b) return;
+  [...$("#scen").children].forEach(x => x.setAttribute("aria-pressed", x===b));
+  scen = b.dataset.v;
+  // the fault injector belongs to the failover story only
+  $("#faultfield").style.display = scen==="failover" ? "" : "none";
+  showScen();
+};
+const COPY = {
+  failover: {
+    h1: "Same agent, same task, same fault. One finishes, one dies.",
+    lede: `An incident-triage agent (<code>retrieve → summarize → extract</code>)
+      serves the same request in two lanes at once. After each lane's first model call,
+      the primary endpoint starts failing. Left pane: what the user sees. Right pane:
+      what ops sees. The user never sees the failover — that's the point.`,
+  },
+  adoption: {
+    h1: "The new model shipped this morning. One lane is already serving it.",
+    lede: `Models ship almost daily now, and everyone wants the newest one — without
+      betting production on it. Same request stream, two lanes: one has its model
+      hard-coded, one calls the DigitalOcean Inference Router. Mid-stream, the router's
+      ranking is reordered through the API. Zero client changes, zero deploys, zero
+      failed requests.`,
+  },
+};
+function showScen(){
+  const fo = scen==="failover";
+  $("#h1").textContent = COPY[scen].h1;
+  $("#lede").innerHTML = COPY[scen].lede;
+  $("#rows").classList.toggle("hidden", !fo);
+  $("#s-tl").classList.toggle("hidden", true);
+  $("#s-sum").classList.toggle("hidden", true);
+  $("#s-mig").classList.toggle("hidden", fo);
+  $("#why-fo").classList.toggle("hidden", !fo);
+  $("#why-ad").classList.toggle("hidden", fo);
+}
+$("#run").onclick = () => scen==="failover" ? start() : startMig();
 
 /* ---------------- lane rows ---------------- */
 function buildRows(){
@@ -463,7 +553,65 @@ function renderSummary(){
   $("#s-sum").classList.remove("hidden");
 }
 
+/* ---------------- act 2: adoption ---------------- */
+const short = m => m.replace("llama3.3-70b-instruct","llama-3.3-70b")
+                    .replace("openai-gpt-oss-20b","gpt-oss-20b");
+let MIG = null;
+
+function startMig(){
+  if(es) es.close();
+  MIG = {old:null, new:null};
+  $("#mig-pinned").innerHTML = ""; $("#mig-routed").innerHTML = "";
+  $("#mig-log").innerHTML = ""; $("#mig-sum").textContent = "";
+  const b = $("#run"); b.disabled = true; b.textContent = "Running…";
+  es = new EventSource("/api/migrate?mock="+($("#mock").checked?"1":"0"));
+  es.onmessage = ev => {
+    const d = JSON.parse(ev.data);
+    if(d.type==="mig_start"){
+      MIG.old = d.old; MIG.new = d.new;
+      $("#mig-pinned-sub").textContent = `model hard-coded: ${d.old} · adopting = edit + redeploy`;
+      $("#mig-routed-sub").textContent = `model: router:${d.router} · ranking lives on the platform`;
+      migLog(`stream of ${d.n} requests per lane · new model candidate: ${d.new}`);
+    }
+    else if(d.type==="mig_req"){
+      const c = document.createElement("div");
+      const cls = !d.ok ? "bad" : (d.served===MIG.new ? "new" : "old");
+      c.className = "cell "+cls;
+      c.innerHTML = `<span class="ri">r${d.i}</span>
+        <span class="mm">${d.ok ? short(d.served||"?") : "failed"}</span>
+        <span class="ms">${d.ms} ms</span>`;
+      $(d.lane==="pinned" ? "#mig-pinned" : "#mig-routed").appendChild(c);
+    }
+    else if(d.type==="mig_flip"){
+      const bar = document.createElement("div");
+      bar.className = "flipbar";
+      $("#mig-routed").appendChild(bar);
+      migLog(`<span class="route">PUT /v2/gen-ai/models/routers/… ranking → `
+        + `[${d.ranking.map(short).join(", ")}]  (HTTP ${d.http})</span> — no deploy, no restart`);
+    }
+    else if(d.type==="mig_end"){
+      const ad = d.adopted_at
+        ? `routed lane adopted ${short(MIG.new)} at r${d.adopted_at}`
+        : "routed lane did not adopt (check router state)";
+      $("#mig-sum").innerHTML =
+        `${ad} · <b>${d.failed} failed requests during migration</b> · `
+        + `pinned lane: still on ${short(MIG.old)}`
+        + (d.restored ? " · ranking restored for the next run" : "");
+      finish();
+    }
+    else if(d.type==="mig_error"){ migLog(esc(d.error)); finish(); }
+    else if(d.type==="busy"){ alert("A run is already in progress."); finish(); }
+  };
+  es.onerror = finish;
+}
+function migLog(html){
+  const d = document.createElement("div");
+  d.innerHTML = html;
+  $("#mig-log").appendChild(d);
+}
+
 buildRows();  // idle state: empty panes make the layout legible before a run
+showScen();   // and the copy matches the selected scenario from first paint
 </script>
 </body>
 </html>

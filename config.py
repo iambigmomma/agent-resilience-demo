@@ -49,6 +49,22 @@ PRICE_PER_MTOK = {
 }
 PRICING_IS_ESTIMATE = True
 
+# --- Act 2: Inference Router (model adoption without downtime) --------------
+# The adoption scenario drives the REAL DigitalOcean Inference Router: the
+# routed lane calls `router:<ROUTER_NAME>` and mid-stream the server reorders
+# the router's model ranking via the control-plane API. Measured propagation
+# on 2026-07-16: ~2s from PUT to first response served by the new model.
+#
+# Requires DIGITALOCEAN_API_TOKEN (control plane, same team as the inference
+# key -- a token from the wrong team makes the router invisible and everything
+# 404s; we learned this the hard way). The router is created on first use if
+# it doesn't exist, so a fork of this repo self-provisions.
+ROUTER_NAME = "agent-demo-router"
+API_TOKEN_ENV = "DIGITALOCEAN_API_TOKEN"
+DO_API_BASE = "https://api.digitalocean.com/v2"
+MIGRATE_REQUESTS = 6   # stream length per lane
+MIGRATE_FLIP_AFTER = 2  # flip the ranking after this many routed responses
+
 # --- Local demo plumbing ----------------------------------------------------
 PROXY_HOST, PROXY_PORT = "127.0.0.1", 8900
 MOCK_HOST, MOCK_PORT = "127.0.0.1", 8901
