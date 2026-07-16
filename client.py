@@ -162,7 +162,14 @@ class Client:
 
                 self._ev(step, "attempt", "200 OK  ✓", attempt, 200, ep.model,
                          dur_ms=dur_ms)
-                return choice["message"]["content"]
+                content = choice["message"]["content"]
+                # The chat pane shows what the agent actually said, so the
+                # transcript can't be canned. 2000 chars: enough that a wordy
+                # model's extract JSON survives intact (a truncated preview
+                # breaks the client-side JSON.parse and the record renders as
+                # raw text), small enough for an SSE line.
+                self._ev(step, "output", content[:2000], model=ep.model)
+                return content
 
             if not err and not _is_retryable(status):
                 self._ev(step, "halt", f"{status} (not retryable)  ✗ AGENT HALTED",

@@ -154,7 +154,10 @@ def main() -> None:
         while any(t.is_alive() for t in threads) or not EVENTS.empty():
             try:
                 e = EVENTS.get(timeout=0.1)
-                LINES[e.lane].append(_fmt(e))
+                # output events carry model text for the web chat pane; in the
+                # terminal they'd just wrap into noise. They stay in the jsonl.
+                if e.kind != "output":
+                    LINES[e.lane].append(_fmt(e))
                 RAW.append(e)
             except queue.Empty:
                 pass

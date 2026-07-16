@@ -99,7 +99,8 @@ async def run_stream(request: Request) -> StreamingResponse:
             results: dict = {}
             yield _sse({
                 "type": "run_start", "fail_mode": fail_mode, "mock": mock_mode,
-                "fail_after": fail_after, "steps": ["retrieve", "summarize", "extract"],
+                "fail_after": fail_after, "task": agent.TASK,
+                "steps": ["retrieve", "summarize", "extract"],
                 "lanes": [{"name": l.name, "blurb": l.blurb,
                            "models": [c.model for c in l.candidates]} for l in LANES],
             })

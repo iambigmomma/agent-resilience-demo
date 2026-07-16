@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Agent resilience — one finishes, one dies</title>
 <style>
-  /* Design intent: an engineering report, not a dashboard. Paper background,
-     ink text, hairline rules. Color appears only where it carries meaning:
-     red = failed request, green = successful request, blue = routing decision.
-     Everything else is monochrome. No gradients, no shadows, no animation
-     beyond the timeline growing as events arrive. Self-contained: no CDN,
-     no font fetch — must render identically offline and on App Platform. */
+  /* Engineering report, not a dashboard. Paper, ink, hairline rules. Color only
+     where it means something: red failed, green ok, blue routing decision.
+     Layout tells the story front-stage/back-stage: per lane, the LEFT pane is
+     the conversation the end user experiences; the RIGHT pane is what ops sees
+     in the logs at the same moment. The failover never appears on the left --
+     that asymmetry IS the product pitch. Self-contained: no CDN, no fonts. */
   :root{
     --paper:#FCFCFA; --ink:#1B1B19; --dim:#6E6E66; --faint:#A6A69C;
     --rule:#E3E3DD; --well:#F4F4F0;
@@ -21,15 +21,15 @@
   *{box-sizing:border-box;margin:0;padding:0}
   html{background:var(--paper)}
   body{color:var(--ink);font-family:var(--sans);font-size:14px;line-height:1.55;
-       max-width:1060px;margin:0 auto;padding:44px 28px 80px}
+       max-width:1100px;margin:0 auto;padding:44px 28px 80px}
 
   .kicker{font:500 10.5px var(--mono);letter-spacing:.14em;color:var(--dim);
           text-transform:uppercase;margin-bottom:14px}
-  h1{font-size:27px;font-weight:640;letter-spacing:-.35px;line-height:1.25;max-width:34ch}
-  .lede{color:var(--dim);margin-top:10px;max-width:64ch}
+  h1{font-size:27px;font-weight:640;letter-spacing:-.35px;line-height:1.25;max-width:38ch}
+  .lede{color:var(--dim);margin-top:10px;max-width:66ch}
   .lede code{font:500 12px var(--mono);color:var(--ink)}
 
-  /* ---- controls: quiet, form-like ---- */
+  /* ---- controls ---- */
   .controls{display:flex;align-items:center;gap:22px;flex-wrap:wrap;
             margin:26px 0 0;padding:14px 0;border-top:1px solid var(--rule);
             border-bottom:1px solid var(--rule)}
@@ -51,8 +51,49 @@
   button.go:hover:not(:disabled){background:#0053C9;border-color:#0053C9}
   button.go:disabled{background:var(--faint);border-color:var(--faint);cursor:default}
 
+  /* ---- lane rows: chat | ops ---- */
+  .lane-row{margin-top:30px}
+  .lane-head{display:flex;align-items:baseline;gap:12px;margin-bottom:10px}
+  .lane-head b{font-size:14px;font-weight:640}
+  .lane-head .models{font:400 10.5px var(--mono);color:var(--faint)}
+  .lane-head .status{margin-left:auto;font:600 11px var(--mono)}
+  .lane-head .status.ok{color:var(--green)} .lane-head .status.err{color:var(--red)}
+  .duo{display:grid;grid-template-columns:1.12fr 1fr;gap:22px}
+  @media(max-width:820px){.duo{grid-template-columns:1fr}}
+  .pane{border:1px solid var(--rule);border-radius:2px;display:flex;flex-direction:column}
+  .pane .cap{font:500 10px var(--mono);letter-spacing:.12em;text-transform:uppercase;
+             color:var(--faint);padding:8px 12px;border-bottom:1px solid var(--rule)}
+  .pane .body{height:330px;overflow-y:auto;scrollbar-width:thin}
+
+  /* chat */
+  .chat .body{padding:14px 14px 10px;display:flex;flex-direction:column;gap:10px}
+  .msg{max-width:88%;padding:8px 12px;border-radius:2px;font-size:13px}
+  .msg .steptag{display:block;font:500 9.5px var(--mono);letter-spacing:.1em;
+                text-transform:uppercase;color:var(--faint);margin-bottom:3px}
+  .msg.user{align-self:flex-end;background:var(--well);border:1px solid var(--rule)}
+  .msg.agent{align-self:flex-start;border:1px solid var(--rule)}
+  .msg.error{align-self:flex-start;border:1px solid rgba(178,58,47,.5);color:var(--red)}
+  .msg.final{align-self:flex-start;border:0;padding:2px 0;font:600 11.5px var(--mono)}
+  .msg.final.ok{color:var(--green)} .msg.final.err{color:var(--red)}
+  .msg .record{font:400 11.5px/1.7 var(--mono);background:var(--well);
+               border:1px solid var(--rule);padding:8px 10px;margin-top:6px}
+  .msg .record b{font-weight:600}
+  .typing{align-self:flex-start;padding:8px 12px;border:1px solid var(--rule);border-radius:2px}
+  .typing i{display:inline-block;width:4px;height:4px;border-radius:50%;
+            background:var(--faint);margin:0 1.5px;animation:tp 1.2s infinite}
+  .typing i:nth-child(2){animation-delay:.2s} .typing i:nth-child(3){animation-delay:.4s}
+  @keyframes tp{0%,60%,100%{opacity:.25}30%{opacity:1}}
+
+  /* ops log */
+  .ops .body{padding:10px 12px}
+  .ops pre{font:400 11px/1.75 var(--mono);white-space:pre-wrap;color:var(--ink)}
+  .ops .t{color:var(--faint)}
+  .ops .ok{color:var(--green)} .ops .err{color:var(--red)}
+  .ops .route{color:var(--blue)} .ops .dim{color:var(--dim)}
+  .ops .halt{color:var(--red);font-weight:600}
+
   /* ---- sections ---- */
-  section{margin-top:34px}
+  section{margin-top:36px}
   .sechead{display:flex;align-items:baseline;gap:12px;margin-bottom:12px}
   .sechead h2{font:500 10.5px var(--mono);letter-spacing:.14em;color:var(--dim);
               text-transform:uppercase}
@@ -60,37 +101,24 @@
   .sechead .hint{font:400 11px var(--mono);color:var(--faint)}
   .hidden{display:none}
 
-  /* ---- timeline ---- */
+  /* timeline */
   #tl{width:100%;display:block}
   .legend{display:flex;gap:20px;margin-top:10px;font:400 11px var(--mono);color:var(--dim)}
   .legend span{display:flex;align-items:center;gap:6px}
   .sw{display:inline-block;width:14px;height:9px}
-  .sw.ok{background:var(--green)}
-  .sw.fail{background:var(--red)}
+  .sw.ok{background:var(--green)} .sw.fail{background:var(--red)}
   .sw.backoff{background:repeating-linear-gradient(45deg,var(--well),var(--well) 3px,#DDDDD5 3px,#DDDDD5 5px);border:1px solid #D8D8D0}
   .sw.route{width:2px;height:12px;background:var(--blue)}
 
-  /* ---- log ---- */
-  .logs{display:grid;grid-template-columns:1fr 1fr;gap:28px}
-  @media(max-width:760px){.logs{grid-template-columns:1fr}}
-  .log h3{font:600 12px var(--mono);margin-bottom:7px}
-  .log pre{font:400 11.5px/1.75 var(--mono);color:var(--ink);overflow-y:auto;
-           max-height:230px;white-space:pre-wrap}
-  .log .t{color:var(--faint)}
-  .log .ok{color:var(--green)} .log .err{color:var(--red)}
-  .log .route{color:var(--blue)} .log .dim{color:var(--dim)}
-  .log .halt{color:var(--red);font-weight:600}
-
-  /* ---- summary table ---- */
-  table{border-collapse:collapse;width:100%;max-width:560px;
-        font-variant-numeric:tabular-nums}
+  /* summary */
+  table{border-collapse:collapse;width:100%;max-width:560px;font-variant-numeric:tabular-nums}
   th,td{text-align:right;padding:7px 2px 7px 26px;border-bottom:1px solid var(--rule);
         font:400 13px var(--mono)}
   th{font:500 10.5px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
   th:first-child,td:first-child{text-align:left;padding-left:0;color:var(--dim);font-size:12px}
   td.yes{color:var(--green);font-weight:600} td.no{color:var(--red);font-weight:600}
 
-  /* ---- why ---- */
+  /* why */
   .why p{color:var(--dim);max-width:66ch}
   .why code{font:500 12px var(--mono);color:var(--ink)}
   .why pre{background:var(--well);border:1px solid var(--rule);border-radius:2px;
@@ -105,9 +133,10 @@
 
 <div class="kicker">DigitalOcean Serverless Inference &nbsp;·&nbsp; routing demo</div>
 <h1>Same agent, same task, same fault. One finishes, one dies.</h1>
-<p class="lede">A three-step agent (<code>retrieve → summarize → extract</code>) runs the
-same task in two lanes at once. After each lane's first request, the primary endpoint
-starts failing. The left lane has one endpoint. The right lane can route.</p>
+<p class="lede">An incident-triage agent (<code>retrieve → summarize → extract</code>)
+serves the same request in two lanes at once. After each lane's first model call, the
+primary endpoint starts failing. Left pane: what the user sees. Right pane: what ops
+sees. The user never sees the failover — that's the point.</p>
 
 <div class="controls">
   <div class="field"><span>fault</span>
@@ -123,6 +152,8 @@ starts failing. The left lane has one endpoint. The right lane can route.</p>
   <button class="go" id="run">Run</button>
 </div>
 
+<div id="rows"></div>
+
 <section id="s-tl" class="hidden">
   <div class="sechead"><h2>Timeline</h2><span class="rule"></span>
     <span class="hint">request spans drawn to scale · shared clock</span></div>
@@ -132,14 +163,6 @@ starts failing. The left lane has one endpoint. The right lane can route.</p>
     <span><i class="sw fail"></i>request failed</span>
     <span><i class="sw backoff"></i>waiting (backoff)</span>
     <span><i class="sw route"></i>&nbsp;failover</span>
-  </div>
-</section>
-
-<section id="s-log" class="hidden">
-  <div class="sechead"><h2>Decision log</h2><span class="rule"></span></div>
-  <div class="logs">
-    <div class="log"><h3>single</h3><pre id="log-single"></pre></div>
-    <div class="log"><h3>routed</h3><pre id="log-routed"></pre></div>
   </div>
 </section>
 
@@ -173,8 +196,7 @@ const LANES = [
   {name:"routed", title:"Routed",          sub:"primary + alt · llama3.3-70b-instruct → openai-gpt-oss-20b"},
 ];
 const STEPS = ["retrieve","summarize","extract"];
-
-let mode = "429", es = null;
+let mode = "429", es = null, T = null;
 
 $("#mode").onclick = e => {
   const b = e.target.closest("button"); if(!b) return;
@@ -183,68 +205,65 @@ $("#mode").onclick = e => {
 };
 $("#run").onclick = start;
 
-/* ---------------- state ---------------- */
-let T; // per-run timeline state
-function freshState(){
-  return {t0:null, spans:[], marks:[], status:{}, results:{}, tmax:1};
+/* ---------------- lane rows ---------------- */
+function buildRows(){
+  $("#rows").innerHTML = LANES.map(l => `
+    <div class="lane-row" id="row-${l.name}">
+      <div class="lane-head">
+        <b>${l.title}</b><span class="models">${l.sub}</span>
+        <span class="status" id="st-${l.name}"></span>
+      </div>
+      <div class="duo">
+        <div class="pane chat"><div class="cap">what the user sees</div>
+          <div class="body" id="chat-${l.name}"></div></div>
+        <div class="pane ops"><div class="cap">what ops sees</div>
+          <div class="body"><pre id="log-${l.name}"></pre></div></div>
+      </div>
+    </div>`).join("");
 }
 
-function start(){
-  if(es) es.close();
-  T = freshState();
-  $("#log-single").textContent = ""; $("#log-routed").textContent = "";
-  $("#sum").innerHTML = "";
-  $("#s-tl").classList.remove("hidden");
-  $("#s-log").classList.remove("hidden");
-  $("#s-sum").classList.add("hidden");
-  drawTL();
-  const b = $("#run"); b.disabled = true; b.textContent = "Running…";
-  const q = new URLSearchParams({fail_mode:mode, mock:$("#mock").checked?"1":"0"});
-  es = new EventSource("/api/run?"+q);
-  es.onmessage = ev => {
-    const d = JSON.parse(ev.data);
-    if(d.type==="event")       onEvent(d);
-    else if(d.type==="result") T.results[d.lane]=d;
-    else if(d.type==="busy"){  alert("A run is already in progress."); finish(); }
-    else if(d.type==="run_end"){ renderSummary(); finish(); }
-  };
-  es.onerror = finish;
+/* chat helpers */
+function bubble(lane, cls, html){
+  const c = $("#chat-"+lane); if(!c) return;
+  typing(lane, false);
+  const d = document.createElement("div");
+  d.className = "msg "+cls; d.innerHTML = html;
+  c.appendChild(d);
+  if(T && !T.done[lane]) typing(lane, true);
+  c.scrollTop = c.scrollHeight;
 }
-function finish(){
-  const b = $("#run"); b.disabled = false; b.textContent = "Run again";
-  if(es){ es.close(); es = null; }
+function typing(lane, on){
+  const c = $("#chat-"+lane); if(!c) return;
+  const cur = c.querySelector(".typing");
+  if(!on){ if(cur) cur.remove(); return; }
+  if(cur){ c.appendChild(cur); return; }
+  const d = document.createElement("div");
+  d.className = "typing"; d.innerHTML = "<i></i><i></i><i></i>";
+  c.appendChild(d); c.scrollTop = c.scrollHeight;
 }
+const esc = s => s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const pad = (s,n) => (s+" ".repeat(n)).slice(0,n);
 
-/* ---------------- events -> spans ---------------- */
-function onEvent(d){
-  const t = d.ts;
-  if(T.t0===null) T.t0 = t - (d.dur_ms? d.dur_ms/1000 : 0);
-  const rel = x => Math.max(0, x - T.t0);
-  const row = d.lane + "/" + d.step;
-
-  if(d.kind==="attempt" && d.dur_ms != null){
-    const end = rel(t), startT = Math.max(0, end - d.dur_ms/1000);
-    T.spans.push({row, t0:startT, t1:end, kind: d.status===200 ? "ok" : "fail",
-                  code: d.status===200 ? "" : (d.status || "t/o")});
-    T.tmax = Math.max(T.tmax, end);
+function chatOutput(d){
+  if(d.step==="retrieve")
+    bubble(d.lane, "agent", `<span class="steptag">retrieve</span>Relevant incident docs: <b>${esc(d.message)}</b>`);
+  else if(d.step==="summarize")
+    bubble(d.lane, "agent", `<span class="steptag">summarize</span>${esc(d.message)}`);
+  else if(d.step==="extract"){
+    let html;
+    try{
+      const j = JSON.parse(d.message.match(/\{[\s\S]*\}/)[0]);
+      html = `<span class="steptag">extract</span>Incident record filed:
+        <div class="record"><b>severity</b>&nbsp; ${esc(j.severity||"?")}<br>
+        <b>service</b>&nbsp;&nbsp; ${esc(j.affected_service||"?")}<br>
+        <b>root cause</b> ${esc(j.root_cause||"?")}<br>
+        <b>action</b>&nbsp;&nbsp;&nbsp; ${esc(j.action||"?")}</div>`;
+    }catch(e){ html = `<span class="steptag">extract</span>${esc(d.message)}`; }
+    bubble(d.lane, "agent", html);
   }
-  if(d.backoff_s){
-    T.spans.push({row, t0:rel(t), t1:rel(t)+d.backoff_s, kind:"backoff"});
-    T.tmax = Math.max(T.tmax, rel(t)+d.backoff_s);
-  }
-  if(d.kind==="routing")
-    T.marks.push({row, t:rel(t), kind:"route"});
-  if(d.kind==="halt" && d.step!=="task")
-    T.marks.push({row, t:rel(t), kind:"halt"});
-  if(d.step==="task")
-    T.status[d.lane] = d.kind==="done"
-      ? {cls:"ok",  text:"task complete"}
-      : {cls:"err", text:"task failed"};
-
-  logLine(d);
-  drawTL();
 }
 
+/* ops log */
 function logLine(d){
   const pre = $("#log-"+d.lane); if(!pre) return;
   const cls = d.kind==="routing" ? "route"
@@ -258,43 +277,109 @@ function logLine(d){
   line.innerHTML = `<span class="t">${d.iso}</span> ${pad(d.step,9)}${att} `
                  + `<span class="${cls}">${esc(d.message.trim())}</span>\n`;
   pre.appendChild(line);
-  pre.scrollTop = pre.scrollHeight;
+  pre.parentElement.scrollTop = pre.parentElement.scrollHeight;
 }
-const esc = s => s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-const pad = (s,n) => (s+" ".repeat(n)).slice(0,n);
+
+/* ---------------- run ---------------- */
+function freshState(){
+  return {t0:null, spans:[], marks:[], status:{}, results:{}, tmax:1,
+          done:{single:false, routed:false}};
+}
+function start(){
+  if(es) es.close();
+  T = freshState();
+  buildRows();
+  $("#sum").innerHTML = "";
+  $("#s-tl").classList.remove("hidden");
+  $("#s-sum").classList.add("hidden");
+  drawTL();
+  const b = $("#run"); b.disabled = true; b.textContent = "Running…";
+  const q = new URLSearchParams({fail_mode:mode, mock:$("#mock").checked?"1":"0"});
+  es = new EventSource("/api/run?"+q);
+  es.onmessage = ev => {
+    const d = JSON.parse(ev.data);
+    if(d.type==="run_start"){
+      for(const l of LANES){ bubble(l.name,"user",esc(d.task)); typing(l.name,true); }
+    }
+    else if(d.type==="event")  onEvent(d);
+    else if(d.type==="result") T.results[d.lane]=d;
+    else if(d.type==="busy"){  alert("A run is already in progress."); finish(); }
+    else if(d.type==="run_end"){ renderSummary(); finish(); }
+  };
+  es.onerror = finish;
+}
+function finish(){
+  const b = $("#run"); b.disabled = false; b.textContent = "Run again";
+  if(es){ es.close(); es = null; }
+}
+
+function onEvent(d){
+  const t = d.ts;
+  if(T.t0===null) T.t0 = t - (d.dur_ms? d.dur_ms/1000 : 0);
+  const rel = x => Math.max(0, x - T.t0);
+  const row = d.lane + "/" + d.step;
+
+  // front stage: outputs and terminal moments only. Routing never shows here.
+  if(d.kind==="output"){ chatOutput(d); return; }  // not an ops-log event
+  if(d.kind==="halt" && d.step!=="task")
+    bubble(d.lane, "error",
+      `Sorry — I couldn't finish this. The model service kept refusing.<br>
+       <span class="steptag" style="margin-top:3px">${esc(d.message.trim())}</span>`);
+  if(d.step==="task"){
+    T.done[d.lane] = true; typing(d.lane, false);
+    const ok = d.kind==="done";
+    bubble(d.lane, "final "+(ok?"ok":"err"), ok ? "✓ task complete" : "✗ task abandoned");
+    const st = $("#st-"+d.lane);
+    st.textContent = ok ? "task complete" : "task failed";
+    st.className = "status "+(ok?"ok":"err");
+    T.status[d.lane] = ok ? {cls:"ok"} : {cls:"err"};
+  }
+
+  // back stage: every decision, including the routing the user never saw
+  logLine(d);
+
+  // timeline data
+  if(d.kind==="attempt" && d.dur_ms != null){
+    const end = rel(t), startT = Math.max(0, end - d.dur_ms/1000);
+    T.spans.push({row, t0:startT, t1:end, kind: d.status===200 ? "ok" : "fail",
+                  code: d.status===200 ? "" : (d.status || "t/o")});
+    T.tmax = Math.max(T.tmax, end);
+  }
+  if(d.backoff_s){
+    T.spans.push({row, t0:rel(t), t1:rel(t)+d.backoff_s, kind:"backoff"});
+    T.tmax = Math.max(T.tmax, rel(t)+d.backoff_s);
+  }
+  if(d.kind==="routing") T.marks.push({row, t:rel(t), kind:"route"});
+  if(d.kind==="halt" && d.step!=="task") T.marks.push({row, t:rel(t), kind:"halt"});
+  drawTL();
+}
 
 /* ---------------- timeline (SVG, drawn to scale) ---------------- */
 const GUT=118, ROWH=27, BARH=12, HEADH=40, LANEGAP=20, AXISH=30, PADR=16;
-
 function drawTL(){
   const svg = $("#tl");
   const W = Math.max(svg.getBoundingClientRect().width || 900, 480);
   const plotW = W - GUT - PADR;
   const tmax = T.tmax * 1.06 + 0.15;
   const X = t => GUT + (t/tmax)*plotW;
-
   const H = 2*(HEADH + STEPS.length*ROWH) + LANEGAP + AXISH;
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
   svg.style.height = H+"px";
 
   const rowY = {};
   let y = 0, out = [];
-
   out.push(`<defs><pattern id="hb" width="6" height="6" patternUnits="userSpaceOnUse"
     patternTransform="rotate(45)"><rect width="6" height="6" fill="#F1F1ED"/>
     <line x1="0" y1="0" x2="0" y2="6" stroke="#D9D9D1" stroke-width="1.6"/></pattern></defs>`);
 
-  // grid first, so bars sit on top
   const step = niceStep(tmax);
-  for(let t=0; t<=tmax; t+=step){
-    out.push(`<line x1="${X(t)}" y1="0" x2="${X(t)}" y2="${H-AXISH+6}"
-      stroke="#EDEDE8" stroke-width="1"/>`);
-  }
+  for(let t=0; t<=tmax; t+=step)
+    out.push(`<line x1="${X(t)}" y1="0" x2="${X(t)}" y2="${H-AXISH+6}" stroke="#EDEDE8" stroke-width="1"/>`);
 
   for(const lane of LANES){
     const st = T.status[lane.name];
     out.push(txt(0, y+14, lane.title, `600 12.5px var(--sans)`, "#1B1B19"));
-    if(st) out.push(txt(W-PADR, y+14, st.text,
+    if(st) out.push(txt(W-PADR, y+14, st.cls==="ok"?"task complete":"task failed",
       `600 11px var(--mono)`, st.cls==="ok"?"#1E7A44":"#B23A2F", "end"));
     out.push(txt(0, y+29, lane.sub, `400 10.5px var(--mono)`, "#A6A69C"));
     y += HEADH;
@@ -309,9 +394,7 @@ function drawTL(){
   for(const sp of T.spans){
     const ry = rowY[sp.row]; if(ry===undefined) continue;
     // Failed requests get a minimum visible width: an injected 429 returns in
-    // ~2ms, and a to-scale sliver would vanish under the backoff hatching --
-    // making "three failed attempts" read as "just waited". The distortion is
-    // a few px and only ever inflates failures, never successes.
+    // ~2ms and a to-scale sliver would vanish under the backoff hatching.
     const x0 = X(sp.t0), w = Math.max(X(sp.t1)-x0, sp.kind==="fail" ? 6 : 2.5);
     const yb = ry + (ROWH-BARH)/2;
     if(sp.kind==="backoff")
@@ -329,13 +412,12 @@ function drawTL(){
     if(m.kind==="route")
       out.push(`<line x1="${X(m.t)}" y1="${ry+2}" x2="${X(m.t)}" y2="${ry+ROWH-2}"
         stroke="#0061EB" stroke-width="2"/>`);
-    else if(X(m.t) + 62 > W)  // no room to the right: hang the label leftward
+    else if(X(m.t) + 62 > W)
       out.push(txt(X(m.t)-5, ry+ROWH/2+4, "halted ✗", `600 10.5px var(--mono)`, "#B23A2F", "end"));
     else
       out.push(txt(X(m.t)+5, ry+ROWH/2+4, "✗ halted", `600 10.5px var(--mono)`, "#B23A2F"));
   }
 
-  // Steps a dead lane never reached are part of the story -- say so, faintly.
   for(const lane of LANES){
     const st = T.status[lane.name];
     if(!st || st.cls!=="err") continue;
@@ -347,14 +429,12 @@ function drawTL(){
     }
   }
 
-  // axis
   const ay = H - AXISH + 6;
   out.push(`<line x1="${GUT}" y1="${ay}" x2="${W-PADR}" y2="${ay}" stroke="#C9C9C1" stroke-width="1"/>`);
   for(let t=0; t<=tmax; t+=step){
     out.push(`<line x1="${X(t)}" y1="${ay}" x2="${X(t)}" y2="${ay+4}" stroke="#C9C9C1"/>`);
     out.push(txt(X(t), ay+17, fmtT(t), `400 10px var(--mono)`, "#A6A69C", "middle"));
   }
-
   svg.innerHTML = out.join("");
 }
 function txt(x,y,s,font,fill,anchor){
@@ -382,6 +462,8 @@ function renderSummary(){
     + row("models used", d=>d.models_used.join(", "));
   $("#s-sum").classList.remove("hidden");
 }
+
+buildRows();  // idle state: empty panes make the layout legible before a run
 </script>
 </body>
 </html>
