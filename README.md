@@ -156,15 +156,32 @@ live demo dies:
 Swap `CORPUS` and the three prompts in `agent.py` for your scenario; adjust the
 pins in `config.py`. Everything else holds. ~20 minutes.
 
-## Next: Fusion integration
+## Act 2: adopt the new model with zero downtime
 
-*(stub)* Fusion would replace the hand-rolled candidate list in `lanes.py` with
-real policy — health-aware routing, circuit breaking, and cost/latency-based
-model selection — so the failover decision comes from the platform rather than
-from a tuple. The demo's seam is deliberately at `Lane.candidates`: that's the
-single place a Fusion-backed router would plug in. Note that the routed lane
-currently restarts at `primary` for every step; a real router would circuit-break
-and stop dialling a backend it already knows is sick.
+Models ship almost daily; everyone wants the newest one without betting
+production on it. The **adoption** scenario drives the **real DigitalOcean
+Inference Router** — nothing simulated outside MOCK mode:
+
+![adoption](docs/adoption.png)
+
+Two lanes serve the same request stream. `pinned` hard-codes its model —
+adopting anything means an edit and a redeploy. `routed` calls
+`router:agent-demo-router`; mid-stream the server reorders the router's ranking
+via `PUT /v2/gen-ai/models/routers/{id}`, and the very next responses are
+served by the new model. Measured propagation: **~2 seconds**. Zero client
+changes, zero deploys, zero failed requests. The ranking is restored at run end
+so the demo repeats cleanly, and the router is self-provisioned on first use.
+
+Requires a second credential: `DIGITALOCEAN_API_TOKEN` (control plane) from the
+**same team** as the inference key — a token from another team makes the router
+invisible and every call 404s, which cost us an hour of debugging. The failover
+scenario and MOCK mode work without it.
+
+The failover lane still hand-rolls its candidate list in `lanes.py` — kept that
+way on purpose, because a two-line tuple is the clearest possible statement of
+what routing buys you. The router's own server-side failover ("if the selected
+model is down or rate limited, pick the next best") is the production version
+of the same idea.
 
 ---
 `make demo` also writes `out/run-<timestamp>.jsonl` — one JSON object per
