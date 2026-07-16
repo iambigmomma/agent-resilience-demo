@@ -33,6 +33,11 @@ class Event:
     attempt: int | None = None
     status: int | None = None
     model: str | None = None
+    # dur_ms: how long the request itself took; backoff_s: how long we then sat
+    # waiting. Both exist so the timeline can be drawn to scale -- the demo's
+    # claim is about time an agent loses, so the chart must not fake it.
+    dur_ms: int | None = None
+    backoff_s: float | None = None
 
     def as_json(self) -> dict:
         d = {
@@ -43,7 +48,7 @@ class Event:
             "kind": self.kind,
             "message": self.message,
         }
-        for k in ("attempt", "status", "model"):
+        for k in ("attempt", "status", "model", "dur_ms", "backoff_s"):
             if getattr(self, k) is not None:
                 d[k] = getattr(self, k)
         return d
@@ -124,11 +129,13 @@ class Client:
         for attempt in range(1, config.MAX_ATTEMPTS + 1):
             ep = self.lane.candidates[idx]
             self.usage.attempted(ep.model)
+            t0 = time.time()
             try:
                 r = self._post(ep, messages)
                 status, err = r.status_code, None
             except (httpx.TimeoutException, httpx.TransportError) as e:
                 status, r, err = 0, None, type(e).__name__
+            dur_ms = int((time.time() - t0) * 1000)
 
             if status == 200:
                 body = r.json()
@@ -153,7 +160,8 @@ class Client:
                         f"mid-answer. Raise config.MAX_TOKENS -- reasoning models "
                         f"spend tokens before they emit any answer.")
 
-                self._ev(step, "attempt", "200 OK  ✓", attempt, 200, ep.model)
+                self._ev(step, "attempt", "200 OK  ✓", attempt, 200, ep.model,
+                         dur_ms=dur_ms)
                 return choice["message"]["content"]
 
             if not err and not _is_retryable(status):
@@ -162,7 +170,8 @@ class Client:
                 raise AgentHalted(f"{step}: {status}")
 
             label = err or _status_label(status)
-            self._ev(step, "attempt", f"-> {label}", attempt, status or None, ep.model)
+            self._ev(step, "attempt", f"-> {label}", attempt, status or None,
+                     ep.model, dur_ms=dur_ms)
 
             if attempt == config.MAX_ATTEMPTS:
                 break
@@ -182,16 +191,17 @@ class Client:
 
             wait = config.BACKOFF_S[min(attempt - 1, len(config.BACKOFF_S) - 1)]
             self._ev(step, "attempt", f"   (backoff {wait:g}s, no alternate)",
-                     attempt, status or None, ep.model)
+                     attempt, status or None, ep.model, backoff_s=wait)
             time.sleep(wait)
 
         self._ev(step, "halt", "✗ AGENT HALTED — retry budget exhausted",
                  config.MAX_ATTEMPTS, None, self.lane.candidates[idx].model)
         raise AgentHalted(f"{step}: exhausted {config.MAX_ATTEMPTS} attempts")
 
-    def _ev(self, step, kind, message, attempt=None, status=None, model=None) -> None:
+    def _ev(self, step, kind, message, attempt=None, status=None, model=None,
+            dur_ms=None, backoff_s=None) -> None:
         self.emit(Event(time.time(), self.lane.name, step, kind, message,
-                        attempt, status, model))
+                        attempt, status, model, dur_ms, backoff_s))
 
 
 def _status_label(status: int) -> str:
