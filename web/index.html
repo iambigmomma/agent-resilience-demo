@@ -147,6 +147,35 @@
   .why pre .c{color:var(--faint)}
   .why pre .hl{color:var(--blue);font-weight:600}
   .fine{margin-top:14px;font-size:12px;color:var(--faint);max-width:70ch}
+
+  /* ---- motion ----
+     Every animation marks a real event arriving; nothing loops, nothing
+     decorates. Durations stay under 350ms with standard easings -- paper and
+     ink, not neon. Vanilla CSS/WAAPI on purpose: framer-motion would drag in
+     React + a build step and break the single-file, offline-safe property. */
+  @keyframes rise{from{opacity:0;transform:translateY(6px)}}
+  @keyframes fade{from{opacity:0}}
+  @keyframes cellin{from{opacity:.3;transform:scale(.94)}}
+  @keyframes growx{from{transform:scaleX(0)}}
+  @keyframes barin{from{transform:scaleY(0)}}
+  @keyframes ping{from{transform:scale(.3);opacity:.7}to{transform:scale(1.8);opacity:0}}
+  .msg{animation:rise .28s cubic-bezier(.2,.7,.3,1)}
+  .ops pre span{animation:fade .3s}
+  .cell.pop{animation:cellin .32s cubic-bezier(.2,.7,.3,1)}
+  .cell.pend{animation:fade .3s both}
+  .flipbar{animation:barin .35s ease-out;transform-origin:top}
+  .lane-head .status.ok,.lane-head .status.err{animation:rise .35s}
+  .migsum{animation:rise .35s}
+  #sum tr{animation:rise .28s both}
+  #sum tr:nth-child(2){animation-delay:.04s} #sum tr:nth-child(3){animation-delay:.08s}
+  #sum tr:nth-child(4){animation-delay:.12s} #sum tr:nth-child(5){animation-delay:.16s}
+  #sum tr:nth-child(6){animation-delay:.20s} #sum tr:nth-child(7){animation-delay:.24s}
+  #tl .grow{transform-box:fill-box;transform-origin:left center;animation:growx .3s ease-out}
+  #tl .ping{transform-box:fill-box;transform-origin:center;animation:ping .6s ease-out forwards;pointer-events:none}
+  #tl .tickin{transform-box:fill-box;transform-origin:center top;animation:barin .3s ease-out}
+  @media (prefers-reduced-motion: reduce){
+    *{animation:none!important;transition:none!important}
+  }
   details.fine summary{cursor:pointer;font:500 10.5px var(--mono);letter-spacing:.1em;
                        text-transform:uppercase;color:var(--faint);list-style:none}
   details.fine summary::before{content:"+ "}
@@ -315,7 +344,7 @@ function bubble(lane, cls, html){
   d.className = "msg "+cls; d.innerHTML = html;
   c.appendChild(d);
   if(T && !T.done[lane]) typing(lane, true);
-  c.scrollTop = c.scrollHeight;
+  c.scrollTo({top:c.scrollHeight, behavior:"smooth"});
 }
 function typing(lane, on){
   const c = $("#chat-"+lane); if(!c) return;
@@ -324,7 +353,7 @@ function typing(lane, on){
   if(cur){ c.appendChild(cur); return; }
   const d = document.createElement("div");
   d.className = "typing"; d.innerHTML = "<i></i><i></i><i></i>";
-  c.appendChild(d); c.scrollTop = c.scrollHeight;
+  c.appendChild(d); c.scrollTo({top:c.scrollHeight, behavior:"smooth"});
 }
 const esc = s => s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 const pad = (s,n) => (s+" ".repeat(n)).slice(0,n);
@@ -362,14 +391,19 @@ function logLine(d){
   line.innerHTML = `<span class="t">${d.iso}</span> ${pad(d.step,9)}${att} `
                  + `<span class="${cls}">${esc(d.message.trim())}</span>\n`;
   pre.appendChild(line);
-  pre.parentElement.scrollTop = pre.parentElement.scrollHeight;
+  pre.parentElement.scrollTo({top:pre.parentElement.scrollHeight, behavior:"smooth"});
 }
 
 /* ---------------- run ---------------- */
 function freshState(){
   return {t0:null, spans:[], marks:[], status:{}, results:{}, tmax:1,
-          done:{single:false, routed:false}};
+          done:{single:false, routed:false},
+          // once-only animation bookkeeping: drawTL rebuilds the whole SVG on
+          // every event, so "which elements are NEW this frame" must be
+          // remembered across rebuilds or everything would re-animate forever
+          seen:new Set()};
 }
+function once(key){ const f = !T.seen.has(key); if(f) T.seen.add(key); return f; }
 function start(){
   if(es) es.close();
   T = freshState();
@@ -493,11 +527,12 @@ function drawTL(){
     // ~2ms and a to-scale sliver would vanish under the backoff hatching.
     const x0 = X(sp.t0), w = Math.max(X(sp.t1)-x0, sp.kind==="fail" ? 6 : 2.5);
     const yb = ry + (ROWH-BARH)/2;
+    const cls = once(`s|${sp.row}|${sp.t0.toFixed(3)}|${sp.kind}`) ? ' class="grow"' : "";
     if(sp.kind==="backoff")
-      out.push(`<rect x="${x0}" y="${yb}" width="${w}" height="${BARH}"
+      out.push(`<rect${cls} x="${x0}" y="${yb}" width="${w}" height="${BARH}"
         fill="url(#hb)" stroke="#D9D9D1" stroke-width="0.6"/>`);
     else
-      out.push(`<rect x="${x0}" y="${yb}" width="${w}" height="${BARH}"
+      out.push(`<rect${cls} x="${x0}" y="${yb}" width="${w}" height="${BARH}"
         fill="${sp.kind==="ok"?"#1E7A44":"#B23A2F"}"/>`);
     if(sp.code && w>=26)
       out.push(txt(x0+w/2, yb+BARH-2.5, sp.code, `600 8.5px var(--mono)`, "#FFFFFF", "middle"));
@@ -505,9 +540,14 @@ function drawTL(){
 
   for(const m of T.marks){
     const ry = rowY[m.row]; if(ry===undefined) continue;
-    if(m.kind==="route")
-      out.push(`<line x1="${X(m.t)}" y1="${ry+2}" x2="${X(m.t)}" y2="${ry+ROWH-2}"
-        stroke="#0061EB" stroke-width="2"/>`);
+    const fresh = once(`m|${m.row}|${m.t.toFixed(3)}|${m.kind}`);
+    if(m.kind==="route"){
+      out.push(`<line${fresh?' class="tickin"':""} x1="${X(m.t)}" y1="${ry+2}"
+        x2="${X(m.t)}" y2="${ry+ROWH-2}" stroke="#0061EB" stroke-width="2"/>`);
+      // one expanding ring, first frame only -- the failover deserves a beat
+      if(fresh) out.push(`<circle class="ping" cx="${X(m.t)}" cy="${ry+ROWH/2}"
+        r="10" fill="none" stroke="#0061EB" stroke-width="1.5"/>`);
+    }
     else if(X(m.t) + 62 > W)
       out.push(txt(X(m.t)-5, ry+ROWH/2+4, "halted ✗", `600 10.5px var(--mono)`, "#B23A2F", "end"));
     else
@@ -595,6 +635,7 @@ function startMig(){
         for(let i=1;i<=d.n;i++){
           const c = document.createElement("div");
           c.className = "cell pend"; c.dataset.cell = `${lane}-${i}`;
+          c.style.animationDelay = `${i*35}ms`;   // staggered reveal
           c.innerHTML = `<span class="ri">r${i}</span><span class="mm">···</span>
             <span class="ms">&nbsp;</span>`;
           cont.appendChild(c);
@@ -606,7 +647,7 @@ function startMig(){
     else if(d.type==="mig_status") migLog(esc(d.msg));
     else if(d.type==="mig_req"){
       const c = cellEl(d.lane, d.i); if(!c) return;
-      c.className = "cell " + (!d.ok ? "bad" : (d.served===MIG.new ? "new" : "old"));
+      c.className = "cell pop " + (!d.ok ? "bad" : (d.served===MIG.new ? "new" : "old"));
       c.innerHTML = `<span class="ri">r${d.i}</span>
         <span class="mm">${d.ok ? short(d.served||"?") : "failed"}</span>
         <span class="ms">${d.ms} ms${d.retried ? " · retry" : ""}</span>`;
