@@ -65,6 +65,18 @@ DO_API_BASE = "https://api.digitalocean.com/v2"
 MIGRATE_REQUESTS = 6   # stream length per lane
 MIGRATE_FLIP_AFTER = 2  # flip the ranking after this many routed responses
 
+# Act 2's cast, separate knobs from act 1's PRIMARY/ALT on purpose: when a
+# model has a genuinely bad day you recast this act without touching the
+# failover story. Any two healthy models tell it fine.
+#
+# mistral rather than PRIMARY_MODEL (llama) as the "old" model: the evening
+# this was written, llama degraded from 1s to 10-18s to hard ReadTimeouts --
+# live proof of this repo's thesis, and exactly why act 2 must not depend on
+# any one model's mood. Flip back to PRIMARY_MODEL if you prefer the
+# older-generation-llama story and `make health` shows it healthy.
+MIGRATE_OLD_MODEL = "mistral-3-14B"
+MIGRATE_NEW_MODEL = ALT_MODEL
+
 # --- Local demo plumbing ----------------------------------------------------
 PROXY_HOST, PROXY_PORT = "127.0.0.1", 8900
 MOCK_HOST, MOCK_PORT = "127.0.0.1", 8901

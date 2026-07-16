@@ -97,6 +97,9 @@
   .cells{display:flex;gap:8px;flex-wrap:wrap;align-items:stretch}
   .cell{border:1px solid var(--rule);border-top:3px solid var(--faint);
         border-radius:2px;padding:7px 12px 8px;min-width:96px}
+  .cell.pend{border-style:dashed;border-top-style:solid;border-top-color:var(--rule)}
+  .cell.pend .mm{color:var(--faint)}
+  .cell.now .mm{animation:tp 1.2s infinite}
   .cell .ri{display:block;font:500 9.5px var(--mono);letter-spacing:.08em;
             color:var(--faint);text-transform:uppercase;margin-bottom:2px}
   .cell .mm{font:600 11.5px var(--mono);color:var(--ink)}
@@ -230,7 +233,7 @@ ROUTED = Lane(candidates=(PRIMARY, <span class="hl">ALT</span>))     <span class
   <div class="sechead"><h2>The only change</h2><span class="rule"></span></div>
   <p>The client never changed. The entire migration is one config write:</p>
 <pre>
-PUT /v2/gen-ai/models/routers/{id}   models: [<span class="hl">"openai-gpt-oss-20b"</span>, "llama3.3-70b-instruct"]
+PUT /v2/gen-ai/models/routers/{id}   models: [<span class="hl" id="put-new">"openai-gpt-oss-20b"</span>, <span id="put-old">"mistral-3-14B"</span>]
 </pre>
   <details class="fine"><summary>notes &amp; caveats</summary>
   Observed propagation ~2s; rollback is the same write in reverse. The pinned lane would
@@ -375,7 +378,7 @@ function start(){
   $("#s-tl").classList.remove("hidden");
   $("#s-sum").classList.add("hidden");
   drawTL();
-  const b = $("#run"); b.disabled = true; b.textContent = "Running…";
+  runBtnBusy(true);
   const q = new URLSearchParams({fail_mode:mode, mock:$("#mock").checked?"1":"0"});
   es = new EventSource("/api/run?"+q);
   es.onmessage = ev => {
@@ -390,8 +393,19 @@ function start(){
   };
   es.onerror = finish;
 }
+let runTimer = null;
+function runBtnBusy(on){
+  const b = $("#run");
+  clearInterval(runTimer);
+  if(!on){ b.disabled = false; b.textContent = "Run again"; return; }
+  b.disabled = true;
+  const t0 = Date.now();
+  b.textContent = "Running… 0s";
+  runTimer = setInterval(() =>
+    b.textContent = `Running… ${Math.round((Date.now()-t0)/1000)}s`, 1000);
+}
 function finish(){
-  const b = $("#run"); b.disabled = false; b.textContent = "Run again";
+  runBtnBusy(false);
   if(es){ es.close(); es = null; }
 }
 
@@ -550,12 +564,20 @@ const short = m => m.replace("llama3.3-70b-instruct","llama-3.3-70b")
                     .replace("openai-gpt-oss-20b","gpt-oss-20b");
 let MIG = null;
 
+function cellEl(lane, i){ return $(`[data-cell="${lane}-${i}"]`); }
+function markNow(lane){
+  const cont = $(lane==="pinned" ? "#mig-pinned" : "#mig-routed");
+  cont.querySelectorAll(".cell.now").forEach(c => c.classList.remove("now"));
+  const next = cont.querySelector(".cell.pend");
+  if(next) next.classList.add("now");
+}
+
 function startMig(){
   if(es) es.close();
   MIG = {old:null, new:null};
   $("#mig-pinned").innerHTML = ""; $("#mig-routed").innerHTML = "";
   $("#mig-log").innerHTML = ""; $("#mig-sum").textContent = "";
-  const b = $("#run"); b.disabled = true; b.textContent = "Running…";
+  runBtnBusy(true);
   es = new EventSource("/api/migrate?mock="+($("#mock").checked?"1":"0"));
   es.onmessage = ev => {
     const d = JSON.parse(ev.data);
@@ -563,25 +585,46 @@ function startMig(){
       MIG.old = d.old; MIG.new = d.new;
       $("#mig-pinned-sub").textContent = `model hard-coded: ${d.old} · adopting = edit + redeploy`;
       $("#mig-routed-sub").textContent = `model: router:${d.router} · ranking lives on the platform`;
+      // the "only change" code block must show the PUT that actually ran
+      $("#put-new").textContent = `"${d.new}"`;
+      $("#put-old").textContent = `"${d.old}"`;
+      // the full shape appears immediately and fills in as results land --
+      // a blank page with a disabled button reads as "hung"
+      for(const lane of ["pinned","routed"]){
+        const cont = $(lane==="pinned" ? "#mig-pinned" : "#mig-routed");
+        for(let i=1;i<=d.n;i++){
+          const c = document.createElement("div");
+          c.className = "cell pend"; c.dataset.cell = `${lane}-${i}`;
+          c.innerHTML = `<span class="ri">r${i}</span><span class="mm">···</span>
+            <span class="ms">&nbsp;</span>`;
+          cont.appendChild(c);
+        }
+        markNow(lane);
+      }
       migLog(`stream of ${d.n} requests per lane · new model candidate: ${d.new}`);
     }
+    else if(d.type==="mig_status") migLog(esc(d.msg));
     else if(d.type==="mig_req"){
-      const c = document.createElement("div");
-      const cls = !d.ok ? "bad" : (d.served===MIG.new ? "new" : "old");
-      c.className = "cell "+cls;
+      const c = cellEl(d.lane, d.i); if(!c) return;
+      c.className = "cell " + (!d.ok ? "bad" : (d.served===MIG.new ? "new" : "old"));
       c.innerHTML = `<span class="ri">r${d.i}</span>
         <span class="mm">${d.ok ? short(d.served||"?") : "failed"}</span>
-        <span class="ms">${d.ms} ms</span>`;
-      $(d.lane==="pinned" ? "#mig-pinned" : "#mig-routed").appendChild(c);
+        <span class="ms">${d.ms} ms${d.retried ? " · retry" : ""}</span>`;
+      markNow(d.lane);
     }
     else if(d.type==="mig_flip"){
       const bar = document.createElement("div");
       bar.className = "flipbar";
-      $("#mig-routed").appendChild(bar);
+      // between the last filled routed cell and the next pending one
+      $("#mig-routed").insertBefore(bar, $("#mig-routed").querySelector(".cell.pend"));
       migLog(`<span class="route">PUT /v2/gen-ai/models/routers/… ranking → `
         + `[${d.ranking.map(short).join(", ")}]  (HTTP ${d.http})</span> — no deploy, no restart`);
     }
     else if(d.type==="mig_end"){
+      document.querySelectorAll(".cell.pend").forEach(c => {
+        c.classList.remove("now");
+        c.querySelector(".mm").textContent = "—";
+      });
       const ad = d.adopted_at
         ? `routed lane adopted ${short(MIG.new)} at r${d.adopted_at}`
         : "routed lane did not adopt (check router state)";

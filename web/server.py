@@ -166,46 +166,62 @@ def _router_body(models: list[str]) -> dict:
     }
 
 
-async def _ensure_router(cx: httpx.AsyncClient, models: list[str]) -> str:
+# Sync httpx run via asyncio.to_thread, matching the failover scenario's
+# battle-tested path -- one HTTP stack for the whole repo. (An earlier version
+# used AsyncClient and got blamed for a wave of ReadTimeouts; the real culprit
+# turned out to be the upstream model flapping -- async calls sampled its bad
+# minutes, a sync probe sampled a good one. The uniform stack is still the
+# right call, just not for the reason first written here.)
+
+def _ensure_router(models: list[str]) -> str:
     """Find the demo router, creating it if absent. Returns its uuid.
     Self-provisioning keeps a fork of this repo runnable without a setup doc."""
-    r = await cx.get(f"{config.DO_API_BASE}/gen-ai/models/routers?per_page=200",
-                     headers=_router_headers())
+    r = httpx.get(f"{config.DO_API_BASE}/gen-ai/models/routers?per_page=200",
+                  headers=_router_headers(), timeout=30)
     r.raise_for_status()
     for router in r.json().get("model_routers") or []:
         if router["name"] == config.ROUTER_NAME:
             return router["uuid"]
-    r = await cx.post(f"{config.DO_API_BASE}/gen-ai/models/routers",
-                      headers=_router_headers(), json=_router_body(models))
+    r = httpx.post(f"{config.DO_API_BASE}/gen-ai/models/routers",
+                   headers=_router_headers(), json=_router_body(models), timeout=30)
     r.raise_for_status()
     return r.json()["model_router"]["uuid"]
 
 
-async def _set_ranking(cx: httpx.AsyncClient, uuid: str, models: list[str]) -> int:
-    r = await cx.put(f"{config.DO_API_BASE}/gen-ai/models/routers/{uuid}",
-                     headers=_router_headers(), json=_router_body(models))
+def _set_ranking(uuid: str, models: list[str]) -> int:
+    r = httpx.put(f"{config.DO_API_BASE}/gen-ai/models/routers/{uuid}",
+                  headers=_router_headers(), json=_router_body(models), timeout=30)
     return r.status_code
 
 
-async def _mig_call(cx: httpx.AsyncClient, api_key: str, model: str, i: int) -> dict:
+def _mig_call(api_key: str, model: str, i: int) -> dict:
+    """One request, one honest retry. Any production client retries a transient
+    timeout; hiding that would be dishonest, so the retry is flagged in the
+    result and the UI shows it on the cell."""
     t0 = time.time()
-    try:
-        r = await cx.post(
-            f"{config.DO_INFERENCE_BASE_URL}/chat/completions",
-            json={"model": model,
-                  "messages": [{"role": "user",
-                                "content": f"Incident #{i}: payments-db failover "
-                                           f"saturated the checkout-api pool. One "
-                                           f"sentence: likely root cause?"}],
-                  "temperature": 0, "max_tokens": 60},
-            headers={"Authorization": f"Bearer {api_key}"})
-        ok = r.status_code == 200
-        served = r.json().get("model") if ok else None
-        return {"ok": ok, "served": served, "status": r.status_code,
-                "ms": int((time.time() - t0) * 1000)}
-    except httpx.HTTPError as e:
-        return {"ok": False, "served": None, "status": 0,
-                "ms": int((time.time() - t0) * 1000), "err": type(e).__name__}
+    last: dict = {}
+    for attempt in (1, 2):
+        try:
+            r = httpx.post(
+                f"{config.DO_INFERENCE_BASE_URL}/chat/completions",
+                json={"model": model,
+                      "messages": [{"role": "user",
+                                    "content": f"Incident #{i}: payments-db failover "
+                                               f"saturated the checkout-api pool. One "
+                                               f"sentence: likely root cause?"}],
+                      "temperature": 0, "max_tokens": 60},
+                headers={"Authorization": f"Bearer {api_key}"}, timeout=45)
+            if r.status_code == 200:
+                return {"ok": True, "served": r.json().get("model"),
+                        "status": 200, "ms": int((time.time() - t0) * 1000),
+                        "retried": attempt > 1}
+            last = {"ok": False, "served": None, "status": r.status_code,
+                    "ms": int((time.time() - t0) * 1000), "retried": attempt > 1}
+        except httpx.HTTPError as e:
+            last = {"ok": False, "served": None, "status": 0,
+                    "ms": int((time.time() - t0) * 1000),
+                    "err": type(e).__name__, "retried": attempt > 1}
+    return last
 
 
 async def migrate_stream(request: Request) -> StreamingResponse:
@@ -213,7 +229,7 @@ async def migrate_stream(request: Request) -> StreamingResponse:
     api_key = os.environ.get(config.API_KEY_ENV, "").strip()
     api_token = os.environ.get(config.API_TOKEN_ENV, "").strip()
 
-    OLD, NEW = config.PRIMARY_MODEL, config.ALT_MODEL
+    OLD, NEW = config.MIGRATE_OLD_MODEL, config.MIGRATE_NEW_MODEL
     N, FLIP = config.MIGRATE_REQUESTS, config.MIGRATE_FLIP_AFTER
 
     async def gen():
@@ -235,44 +251,72 @@ async def migrate_stream(request: Request) -> StreamingResponse:
             yield _sse({"type": "mig_start", "n": N, "old": OLD, "new": NEW,
                         "router": config.ROUTER_NAME, "mock": mock})
 
+            uuid = None
             if mock:
-                # Offline rehearsal: same rhythm, canned outcomes.
+                yield _sse({"type": "mig_status",
+                            "msg": "offline mock — canned rhythm, no network"})
+            else:
+                # The setup round-trips take a few seconds; say so, or the
+                # page looks dead exactly when the presenter needs it alive.
+                yield _sse({"type": "mig_status",
+                            "msg": "verifying router config on the control plane…"})
+                uuid = await asyncio.to_thread(_ensure_router, [OLD, NEW])
+                await asyncio.to_thread(_set_ranking, uuid, [OLD, NEW])
+                yield _sse({"type": "mig_status",
+                            "msg": "baseline ranking set — streaming live requests"})
+
+            # The lanes deliberately do NOT run in lockstep: pairing them
+            # would clamp both to the slowest request, and the divergence --
+            # routed racing ahead on the new model while pinned grinds -- is
+            # the story.
+            q: asyncio.Queue = asyncio.Queue()
+            MIG_FLIPPED = asyncio.Event()
+
+            async def call(lane: str, i: int) -> dict:
+                if mock:
+                    await asyncio.sleep(0.5 if lane == "pinned" else 0.4)
+                    flipped = MIG_FLIPPED.is_set() and lane == "routed"
+                    return {"ok": True, "served": NEW if flipped else OLD,
+                            "ms": 500 if lane == "pinned" else 400}
+                model = OLD if lane == "pinned" else f"router:{config.ROUTER_NAME}"
+                return await asyncio.to_thread(_mig_call, api_key, model, i)
+
+            async def lane_task(lane: str):
                 for i in range(1, N + 1):
-                    await asyncio.sleep(0.35)
-                    yield _sse({"type": "mig_req", "lane": "pinned", "i": i,
-                                "served": OLD, "ok": True, "ms": 340})
-                    yield _sse({"type": "mig_req", "lane": "routed", "i": i,
-                                "served": OLD if i <= FLIP else NEW,
-                                "ok": True, "ms": 360})
-                    if i == FLIP:
-                        yield _sse({"type": "mig_flip", "http": 200,
-                                    "ranking": [NEW, OLD]})
-                yield _sse({"type": "mig_end", "adopted_at": FLIP + 1,
-                            "failed": 0, "restored": True})
-                return
+                    r = await call(lane, i)
+                    await q.put({"type": "mig_req", "lane": lane, "i": i, **r})
+                    if lane == "routed" and i == FLIP:
+                        code = 200 if mock else \
+                            await asyncio.to_thread(_set_ranking, uuid, [NEW, OLD])
+                        MIG_FLIPPED.set()
+                        await q.put({"type": "mig_flip", "http": code,
+                                     "ranking": [NEW, OLD]})
 
-            async with httpx.AsyncClient(timeout=90) as cx:
-                uuid = await _ensure_router(cx, [OLD, NEW])
-                await _set_ranking(cx, uuid, [OLD, NEW])  # known starting state
+            tasks = [asyncio.ensure_future(lane_task("pinned")),
+                     asyncio.ensure_future(lane_task("routed"))]
 
-                failed, adopted_at = 0, None
-                for i in range(1, N + 1):
-                    pinned, routed = await asyncio.gather(
-                        _mig_call(cx, api_key, OLD, i),
-                        _mig_call(cx, api_key, f"router:{config.ROUTER_NAME}", i))
-                    failed += (not pinned["ok"]) + (not routed["ok"])
-                    if routed["ok"] and routed["served"] == NEW and adopted_at is None:
-                        adopted_at = i
-                    yield _sse({"type": "mig_req", "lane": "pinned", "i": i, **pinned})
-                    yield _sse({"type": "mig_req", "lane": "routed", "i": i, **routed})
-                    if i == FLIP:
-                        code = await _set_ranking(cx, uuid, [NEW, OLD])
-                        yield _sse({"type": "mig_flip", "http": code,
-                                    "ranking": [NEW, OLD]})
+            failed, adopted_at = 0, None
+            while not (all(t.done() for t in tasks) and q.empty()):
+                try:
+                    item = await asyncio.wait_for(q.get(), timeout=0.2)
+                except asyncio.TimeoutError:
+                    continue
+                if item["type"] == "mig_req":
+                    failed += not item["ok"]
+                    if (item["lane"] == "routed" and item["ok"]
+                            and item["served"] == NEW and adopted_at is None):
+                        adopted_at = item["i"]
+                yield _sse(item)
+            for t in tasks:
+                t.result()  # surface lane-task crashes instead of hiding them
 
-                restored = await _set_ranking(cx, uuid, [OLD, NEW]) == 200
-                yield _sse({"type": "mig_end", "adopted_at": adopted_at,
-                            "failed": failed, "restored": restored})
+            restored = True if mock else \
+                (await asyncio.to_thread(_set_ranking, uuid, [OLD, NEW])) == 200
+            yield _sse({"type": "mig_end", "adopted_at": adopted_at,
+                        "failed": failed, "restored": restored})
+        except Exception as e:
+            yield _sse({"type": "mig_error",
+                        "error": f"{type(e).__name__}: {e}"})
         finally:
             RUN_LOCK.release()
 
