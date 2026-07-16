@@ -5,7 +5,11 @@
 The only difference between the two lanes is where they send their inference —
 one fixed endpoint, versus DigitalOcean Serverless Inference behind routing.
 
+**▶ Live: https://agent-resilience-demo-q7rzp.ondigitalocean.app**
+
 ![dashboard](docs/dashboard.png)
+
+*(Actual output from the live app against the real DO API — not a mockup.)*
 
 ## Run it
 
@@ -36,18 +40,27 @@ Hit **⚡ 注入故障並開跑**. Left lane stalls, retries, dies. Right lane l
 
 ## Deploy
 
+Running on App Platform at the link above. To deploy your own:
+
 ```sh
-doctl apps create --spec .do/app.yaml     # edit the github.repo field first
+# 1. point .do/app.yaml's git.repo_clone_url at your fork, then:
+doctl apps create --spec .do/app.yaml
+
+# 2. set the key (do NOT put it in the committed spec):
+doctl apps update <APP_ID> --spec <(sed "s|# value: .*|value: $DIGITALOCEAN_INFERENCE_KEY|" .do/app.yaml)
+
+# 3. re-deploy after a push (a plain git source has no deploy-on-push):
+doctl apps create-deployment <APP_ID>
 ```
 
-Then set `DIGITALOCEAN_INFERENCE_KEY` as a **SECRET** env var in the App
-Platform dashboard. Without it the app still boots and MOCK still works, which
-is your stage fallback. `make docker` runs the same image locally first.
+Without the key the app still boots and the MOCK toggle still works — that's
+your fallback if a key isn't available on stage. `make docker` runs the same
+image locally.
 
-> **Untested:** the container build and the App Platform deploy have not been
-> run end-to-end (the Docker daemon wouldn't start on the authoring machine).
-> The app itself is verified against the real DO API via `make web`. Build the
-> image once before you rely on it.
+The build is a `python:3.11-slim` base pinned **by digest**, installing
+`requirements.lock` with `--require-hashes`. If you regenerate that lock, read
+its header first — resolving it on the wrong interpreter breaks the build in a
+way that only shows up on 3.11/3.12.
 
 ## How it works
 
@@ -108,6 +121,31 @@ valid, and serving real `429 Platform overloaded` — so the routed lane failed
 over into a backend that was itself down, and both lanes died. A failover target
 that is degraded is not a failover target. `make health` catches that; `make
 models` doesn't.
+
+Then click through once with **無故障** and once with **429**. If the routed
+lane ever fails, read the error rather than trusting the shape of the demo:
+it is far more likely to be your alt model misbehaving than the routing story.
+
+## Scars
+
+Things this repo learned the hard way, kept here because each one is a way a
+live demo dies:
+
+- **A listed model is not a working model.** See above. → `make health`.
+- **Don't tune timeouts against a mock.** `REQUEST_TIMEOUT_S=4` looked fine
+  against a 0.25s canned upstream; the real 70B took 2.4s and the resulting fake
+  ReadTimeout silently ate a fault-injector count and desynced the whole run.
+- **Reasoning models spend tokens before they answer.** `max_tokens=400` cut
+  `gpt-oss-20b`'s JSON in half *intermittently* (observed peak: 535 completion
+  tokens), and it surfaced as `no JSON object in model output` — a truncation
+  bug wearing a parsing bug's clothes. `client.py` now names it.
+- **Lock for the interpreter you deploy on, not the one you author on.** `anyio`
+  needs `typing_extensions` only below 3.13; a lock resolved on 3.14 omits it and
+  then `--require-hashes` fails on every 3.11/3.12 machine. It killed the first
+  App Platform build.
+- **Look at your own dashboard.** Stat cards were appended in completion order,
+  so the *failing* lane displayed the winner's numbers. Every API check passed.
+  Only a screenshot caught it.
 
 ## Fork it
 
