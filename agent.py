@@ -13,19 +13,23 @@ import re
 
 from client import Client
 
-TASK = "Triage the on-call incident reports and emit a structured record."
+TASK = "Review this week's customer feedback and file a product insight report."
 
 # A tiny fake retrieval corpus, inline so the repo has no data dependencies.
+# Deliberately NOT an incident/outage scenario: on stage, an agent triaging
+# "our" incidents reads as us having incidents. Feedback analysis is neutral.
 CORPUS = {
-    "doc-1": "Marketing site CSS regression: footer misaligned on Safari 17.",
-    "doc-2": "checkout-api p99 latency 340ms -> 4.2s at 02:14 UTC. Connection "
-             "pool saturated against payments-db. 12% of carts abandoned.",
-    "doc-3": "Weekly analytics batch finished 6 minutes late. No user impact.",
-    "doc-4": "payments-db failover event 02:11 UTC. Replica promoted. Apps "
-             "using the stale writer endpoint reconnected over ~9 minutes.",
+    "doc-1": "Onboarding praise: three new users called the setup flow the "
+             "easiest they have tried this year.",
+    "doc-2": "Enterprise deals blocked: four prospects asked for SSO/SAML this "
+             "week; two said it is the only blocker to signing.",
+    "doc-3": "Typo report: the shipping-notification email says 'you order' "
+             "instead of 'your order'.",
+    "doc-4": "Batch users hitting API rate limits: three paying customers asked "
+             "for higher limits for overnight jobs; one is evaluating competitors.",
 }
 
-REQUIRED_KEYS = {"severity", "root_cause", "affected_service", "action"}
+REQUIRED_KEYS = {"priority", "theme", "affected_area", "action"}
 
 
 def run(client: Client) -> dict:
@@ -36,23 +40,25 @@ def run(client: Client) -> dict:
         {"role": "system", "content": "You select relevant documents. Reply with "
                                       "ONLY a comma-separated list of doc ids."},
         {"role": "user", "content": f"Task: {TASK}\n\nCatalog:\n{catalog}\n\n"
-                                    f"Which docs describe a real production incident?"},
+                                    f"Which docs carry an actionable product "
+                                    f"signal (not trivia)?"},
     ])
     ids = [d for d in re.findall(r"doc-\d", picked) if d in CORPUS] or list(CORPUS)
     docs = "\n\n".join(f"[{i}] {CORPUS[i]}" for i in dict.fromkeys(ids))
 
     summary = client.complete("summarize", [
-        {"role": "system", "content": "You are a terse incident analyst."},
-        {"role": "user", "content": f"Summarize the incident in 2 sentences, "
-                                    f"naming the likely root cause.\n\n{docs}"},
+        {"role": "system", "content": "You are a terse product analyst."},
+        {"role": "user", "content": f"Summarize the strongest customer signal in "
+                                    f"2 sentences, naming what customers are "
+                                    f"asking for.\n\n{docs}"},
     ])
 
     raw = client.complete("extract", [
         {"role": "system", "content": "Reply with ONLY a JSON object, no prose, "
-                                      "no markdown fence. Keys: severity "
-                                      "(SEV1|SEV2|SEV3), root_cause (string), "
-                                      "affected_service (string), action (string)."},
-        {"role": "user", "content": f"Incident summary:\n{summary}"},
+                                      "no markdown fence. Keys: priority "
+                                      "(P1|P2|P3), theme (string), "
+                                      "affected_area (string), action (string)."},
+        {"role": "user", "content": f"Customer feedback summary:\n{summary}"},
     ])
 
     return _parse(raw)

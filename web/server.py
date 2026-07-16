@@ -155,12 +155,12 @@ def _router_headers() -> dict:
 def _router_body(models: list[str]) -> dict:
     return {
         "name": config.ROUTER_NAME,
-        "description": "agent-resilience-demo: incident triage workload",
+        "description": "agent-resilience-demo: customer feedback insights",
         "policies": [{
             "custom_task": {
-                "name": "incident-triage",
-                "description": "Triage on-call incident reports: select docs, "
-                               "summarize, emit structured JSON"},
+                "name": "feedback-insights",
+                "description": "Review customer feedback: select docs, "
+                               "summarize, emit a structured product insight"},
             "models": models}],
         "fallback_models": ["mistral-3-14B"],
     }
@@ -206,9 +206,10 @@ def _mig_call(api_key: str, model: str, i: int) -> dict:
                 f"{config.DO_INFERENCE_BASE_URL}/chat/completions",
                 json={"model": model,
                       "messages": [{"role": "user",
-                                    "content": f"Incident #{i}: payments-db failover "
-                                               f"saturated the checkout-api pool. One "
-                                               f"sentence: likely root cause?"}],
+                                    "content": f"Feedback item #{i}: enterprise "
+                                               f"prospects keep requesting SSO/SAML. "
+                                               f"One sentence: what should we "
+                                               f"prioritize?"}],
                       "temperature": 0, "max_tokens": 60},
                 headers={"Authorization": f"Bearer {api_key}"}, timeout=45)
             if r.status_code == 200:

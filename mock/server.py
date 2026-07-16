@@ -21,19 +21,18 @@ import config
 RETRIEVE = "doc-2, doc-4"
 
 SUMMARIZE = (
-    "At 02:11 UTC a payments-db failover promoted a replica, and applications "
-    "still pointing at the stale writer endpoint took roughly nine minutes to "
-    "reconnect. That saturated the checkout-api connection pool, driving p99 "
-    "latency from 340ms to 4.2s and abandoning 12% of carts."
+    "Enterprise buyers are blocked on SSO/SAML: four prospects raised it this "
+    "week and two called it their only blocker to signing. Batch API users are "
+    "also asking for higher rate limits for overnight jobs, and one paying "
+    "customer is already evaluating competitors over it."
 )
 
 EXTRACT = json.dumps({
-    "severity": "SEV2",
-    "root_cause": "Stale writer endpoint cached across payments-db failover; "
-                  "checkout-api connection pool saturated during reconnect.",
-    "affected_service": "checkout-api",
-    "action": "Shorten DNS/endpoint TTL for payments-db and add pool-saturation "
-              "alerting at p99 > 1s.",
+    "priority": "P1",
+    "theme": "Enterprise readiness: SSO/SAML and API rate limits",
+    "affected_area": "auth / API platform",
+    "action": "Ship SAML SSO this quarter and offer a raised rate-limit tier "
+              "for batch workloads.",
 }, indent=2)
 
 
@@ -41,7 +40,7 @@ def _reply_for(messages: list[dict]) -> str:
     sys = " ".join(m.get("content", "") for m in messages if m.get("role") == "system")
     if "select relevant documents" in sys:
         return RETRIEVE
-    if "incident analyst" in sys:
+    if "product analyst" in sys:
         return SUMMARIZE
     return EXTRACT
 

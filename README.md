@@ -29,7 +29,7 @@ Hit **Run**. Each lane is shown front-stage/back-stage: the left pane is the
 agent conversation the end user sees, the right pane is the decision log ops
 sees, and a to-scale request timeline sits below. The single-endpoint lane's
 user watches a typing indicator die into an apology; the routed lane's user
-gets their incident report and never learns a failover happened — the 429s and
+gets their report and never learns a failover happened — the 429s and
 routing decisions exist only in the ops pane. There's also a terminal version
 (`make demo`) that prints the same decision log with `rich`.
 

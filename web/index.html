@@ -96,7 +96,10 @@
   .mig-lane{margin-top:18px}
   .cells{display:flex;gap:8px;flex-wrap:wrap;align-items:stretch}
   .cell{border:1px solid var(--rule);border-top:3px solid var(--faint);
-        border-radius:2px;padding:7px 12px 8px;min-width:96px}
+        border-radius:2px;padding:7px 12px 8px;
+        flex:0 0 122px;width:122px}  /* equal-width: request size must not read
+                                        as varying with the model name's length */
+  .cell .mm{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .cell.pend{border-style:dashed;border-top-style:solid;border-top-color:var(--rule)}
   .cell.pend .mm{color:var(--faint)}
   .cell.now .mm{animation:tp 1.2s infinite}
@@ -360,18 +363,18 @@ const pad = (s,n) => (s+" ".repeat(n)).slice(0,n);
 
 function chatOutput(d){
   if(d.step==="retrieve")
-    bubble(d.lane, "agent", `<span class="steptag">retrieve</span>Relevant incident docs: <b>${esc(d.message)}</b>`);
+    bubble(d.lane, "agent", `<span class="steptag">retrieve</span>Relevant feedback: <b>${esc(d.message)}</b>`);
   else if(d.step==="summarize")
     bubble(d.lane, "agent", `<span class="steptag">summarize</span>${esc(d.message)}`);
   else if(d.step==="extract"){
     let html;
     try{
       const j = JSON.parse(d.message.match(/\{[\s\S]*\}/)[0]);
-      html = `<span class="steptag">extract</span>Incident record filed:
-        <div class="record"><b>severity</b>&nbsp; ${esc(j.severity||"?")}<br>
-        <b>service</b>&nbsp;&nbsp; ${esc(j.affected_service||"?")}<br>
-        <b>root cause</b> ${esc(j.root_cause||"?")}<br>
-        <b>action</b>&nbsp;&nbsp;&nbsp; ${esc(j.action||"?")}</div>`;
+      html = `<span class="steptag">extract</span>Insight report filed:
+        <div class="record"><b>priority</b> ${esc(j.priority||"?")}<br>
+        <b>theme</b>&nbsp;&nbsp;&nbsp; ${esc(j.theme||"?")}<br>
+        <b>area</b>&nbsp;&nbsp;&nbsp;&nbsp; ${esc(j.affected_area||"?")}<br>
+        <b>action</b>&nbsp;&nbsp; ${esc(j.action||"?")}</div>`;
     }catch(e){ html = `<span class="steptag">extract</span>${esc(d.message)}`; }
     bubble(d.lane, "agent", html);
   }
