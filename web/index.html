@@ -654,6 +654,15 @@ function startMig(){
       c.innerHTML = `<span class="ri">r${d.i}</span>
         <span class="mm">${d.ok ? short(d.served||"?") : "failed"}</span>
         <span class="ms">${d.ms} ms${d.retried ? " · retry" : ""}</span>`;
+      if(d.route){
+        c.title = `x-model-router-selected-route: ${d.route}`;
+        if(!MIG.routeLogged){
+          MIG.routeLogged = true;
+          migLog(`router attribution on every routed response: `
+            + `<span class="route">x-model-router-selected-route: ${esc(d.route)}</span>`
+            + ` — the model choice happened on the platform, not in this client`);
+        }
+      }
       markNow(d.lane);
     }
     else if(d.type==="mig_flip"){

@@ -215,7 +215,12 @@ def _mig_call(api_key: str, model: str, i: int) -> dict:
             if r.status_code == 200:
                 return {"ok": True, "served": r.json().get("model"),
                         "status": 200, "ms": int((time.time() - t0) * 1000),
-                        "retried": attempt > 1}
+                        "retried": attempt > 1,
+                        # Server-side attribution: which router task matched.
+                        # This is the receipt that the ROUTER picked the model
+                        # -- the console has no per-request router log, so the
+                        # response headers are the audit trail.
+                        "route": r.headers.get("x-model-router-selected-route")}
             last = {"ok": False, "served": None, "status": r.status_code,
                     "ms": int((time.time() - t0) * 1000), "retried": attempt > 1}
         except httpx.HTTPError as e:
