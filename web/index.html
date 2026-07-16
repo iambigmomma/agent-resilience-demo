@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -141,38 +141,41 @@
 <body>
 
 <header class="top">
-  <h1>同一個 agent · 同一個任務 · 同一個故障 — <b>一個活著，一個死了</b></h1>
+  <h1>Same agent · same task · same fault — <b>one finishes, one dies</b></h1>
   <span class="sub">DigitalOcean Serverless Inference</span>
 </header>
 
 <div class="bar">
-  <span class="label">故障模式</span>
+  <span class="label">fault</span>
   <div class="seg" id="mode">
     <button data-v="429" aria-pressed="true">429</button>
     <button data-v="timeout" aria-pressed="false">timeout</button>
     <button data-v="5xx" aria-pressed="false">5xx</button>
-    <button data-v="none" aria-pressed="false">無故障</button>
+    <button data-v="none" aria-pressed="false">none</button>
   </div>
-  <label class="toggle"><input type="checkbox" id="mock"> MOCK（離線・免 key）</label>
+  <label class="toggle"><input type="checkbox" id="mock"> MOCK &nbsp;offline, no key</label>
   <span class="spacer"></span>
-  <button class="run" id="run">⚡ 注入故障並開跑</button>
+  <button class="run" id="run">⚡ Inject fault &amp; run</button>
 </div>
 
 <div class="lanes" id="lanes"></div>
 <div class="stats" id="stats"></div>
 
 <div class="point" id="point">
-  <h3>唯一的差別</h3>
-  <p>兩條 lane 跑的是<strong>同一份 <code>agent.py</code></strong>，打的是<strong>同一個故障</strong>。
-     <code>client.py</code> 裡沒有任何一行 <code>if lane ==</code>。差別只有 <code>lanes.py</code>
-     裡一個 tuple 的長度 —— 右邊那條有地方可以去。</p>
+  <h3>The only difference</h3>
+  <p>Both lanes ran the <strong>same <code>agent.py</code></strong> against the
+     <strong>same fault</strong>. There is no <code>if lane ==</code> anywhere in
+     <code>client.py</code>. The difference is the length of one tuple in
+     <code>lanes.py</code> — the right lane had somewhere else to go.</p>
   <div class="diff">
 <span class="c"># lanes.py</span>
-<span class="a">SINGLE = Lane(candidates=(PRIMARY,))         # ← 無路可退，燒完 retry 就死</span>
-<span class="b">ROUTED = Lane(candidates=(PRIMARY, ALT))     # ← 繞過故障，完成任務</span>
+<span class="a">SINGLE = Lane(candidates=(PRIMARY,))         # ← nowhere to go: burns its retries, dies</span>
+<span class="b">ROUTED = Lane(candidates=(PRIMARY, ALT))     # ← routes around it, finishes the task</span>
   </div>
-  <p class="note">這不是延遲測試。routed lane 的 wall clock 有時更慢（多打了一次失敗的請求）。
-     重點只有一個：任務有沒有完成。故障是本機注入的合成 429，不代表任何供應商的真實限制。</p>
+  <p class="note">This is not a latency benchmark. The routed lane is often
+     <em>slower</em> — it makes an extra failed request before failing over. The only
+     thing being measured is whether the task finished. The fault is a synthetic 429
+     injected locally; it says nothing about any provider's real rate limits.</p>
 </div>
 
 <script>
@@ -185,7 +188,7 @@ $("#mode").onclick = e => {
   const b = e.target.closest("button"); if(!b) return;
   [...$("#mode").children].forEach(x => x.setAttribute("aria-pressed", x===b));
   mode = b.dataset.v;
-  $("#run").textContent = mode === "none" ? "▶ 乾淨跑一次" : "⚡ 注入故障並開跑";
+  $("#run").textContent = mode === "none" ? "▶ Clean run" : "⚡ Inject fault & run";
 };
 $("#run").onclick = () => start();
 
@@ -195,12 +198,12 @@ function laneEl(l){
      <div class="chip${i?'':' active'}" data-model="${m}"><span class="dot"></span>${m}</div>`
   ).join("");
   return `<section class="lane" id="L-${l.name}">
-    <h2>${l.name==='single'?'單一端點':'路由'} <span class="tag">${l.name}</span></h2>
+    <h2>${l.name==='single'?'Single endpoint':'Routed'} <span class="tag">${l.name}</span></h2>
     <div class="blurb">${l.blurb}</div>
     <div class="eps">${models}</div>
     <ul class="steps">${STEPS.map(s=>`<li data-s="${s}"><span class="sd"></span>${s}<span class="m"></span></li>`).join("")}</ul>
     <div class="log"></div>
-    <div class="verdict">待命</div>
+    <div class="verdict">idle</div>
   </section>`;
 }
 
@@ -224,7 +227,7 @@ function start(){
     }
     else if(d.type==="event") onEvent(d);
     else if(d.type==="result") onResult(d);
-    else if(d.type==="busy"){ alert("已經有一個 run 在跑，等它結束。"); done(); }
+    else if(d.type==="busy"){ alert("A run is already in progress — let it finish."); done(); }
     else if(d.type==="run_end"){ $("#point").classList.add("show"); done(); }
   };
   es.onerror = () => { done(); };
@@ -241,7 +244,7 @@ function onEvent(d){
     else if(d.kind==="halt"){ li.className="bad"; li.querySelector(".m").textContent="✗ HALTED"; }
     else if(d.kind==="attempt" && d.status){
       li.className="run bad hit"; setTimeout(()=>li.classList.remove("hit"),340);
-      li.querySelector(".m").textContent = `${d.status} · 重試 ${d.attempt}/3`;
+      li.querySelector(".m").textContent = `${d.status} · retry ${d.attempt}/3`;
     } else if(d.kind==="attempt"){ li.classList.add("run"); }
   }
 
@@ -274,7 +277,7 @@ function onResult(d){
     lane.classList.add(d.completed?"alive":"dead");
     const v = lane.querySelector(".verdict");
     v.className = "verdict " + (d.completed?"pass":"fail");
-    v.textContent = d.completed ? "✓ 任務完成" : "✗ 任務失敗";
+    v.textContent = d.completed ? "✓ TASK COMPLETE" : "✗ TASK FAILED";
   }
   const s = $("#S-"+d.lane); if(!s) return;   // keyed by lane, never by arrival
   s.className = "stat show";
@@ -288,8 +291,8 @@ const escapeHtml = s => s.replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&
 
 // paint idle lanes so the page isn't empty before the first run
 $("#lanes").innerHTML = [
-  {name:"single", blurb:"單一固定端點（single-vendor）", models:["llama3.3-70b-instruct"]},
-  {name:"routed", blurb:"DO Serverless Inference + 路由", models:["llama3.3-70b-instruct","openai-gpt-oss-20b"]},
+  {name:"single", blurb:"one fixed endpoint (single-vendor)", models:["llama3.3-70b-instruct"]},
+  {name:"routed", blurb:"DO Serverless Inference + routing", models:["llama3.3-70b-instruct","openai-gpt-oss-20b"]},
 ].map(laneEl).join("");
 </script>
 </body>

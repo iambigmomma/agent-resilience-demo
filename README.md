@@ -25,7 +25,7 @@ make health               # do the pinned models actually answer? RUN THIS FIRST
 make web
 ```
 
-Hit **⚡ 注入故障並開跑**. Left lane stalls, retries, dies. Right lane logs the
+Hit **⚡ Inject fault & run**. Left lane stalls, retries, dies. Right lane logs the
 429, fails over to a different model, finishes. There's also a terminal version
 (`make demo`) that prints the same decision log with `rich`.
 
@@ -33,7 +33,7 @@ Hit **⚡ 注入故障並開跑**. Left lane stalls, retries, dies. Right lane l
 
 | Control | Default | What it does |
 |---|---|---|
-| 故障模式 | `429` | `429` (~5s, use this live), `5xx` (~5s), `timeout` (~50s — the single lane really does sit there; dramatic, but don't open with it), `無故障` (clean run, ~5s — show this first so they see both lanes healthy) |
+| fault | `429` | `429` (~5s, use this live), `5xx` (~5s), `timeout` (~50s — the single lane really does sit there; dramatic, but don't open with it), `none` (clean run, ~5s — show this first so they see both lanes healthy) |
 | MOCK | off | Local canned upstream. No key, no network, byte-identical runs. |
 | `make demo FAIL_AFTER=2` | `1` | Start failing after N requests **per lane**. `1` breaks `summarize`. |
 | `make demo FAIL_DURATION=90` | `60` | Seconds the fault persists. The injector rejects values too short to be deterministic. |
@@ -122,7 +122,7 @@ over into a backend that was itself down, and both lanes died. A failover target
 that is degraded is not a failover target. `make health` catches that; `make
 models` doesn't.
 
-Then click through once with **無故障** and once with **429**. If the routed
+Then click through once with **none** and once with **429**. If the routed
 lane ever fails, read the error rather than trusting the shape of the demo:
 it is far more likely to be your alt model misbehaving than the routing story.
 
