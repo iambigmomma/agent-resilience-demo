@@ -64,6 +64,14 @@ FAIL_ALIAS = "primary"  # only the primary backend is sick; the alt is healthy
 # --- Retry / routing policy -------------------------------------------------
 # ONE policy, shared by both lanes. Read client.py: there is no `if lane ==`
 # anywhere. The lanes differ only in how many candidate endpoints they hand in.
+# 1200, not 400. openai-gpt-oss-20b is a *reasoning* model: it spends tokens on
+# reasoning_content before it writes a single character of the answer. At 400 it
+# hit finish_reason=length mid-JSON, the closing brace never arrived, and the
+# agent died with a baffling "no JSON object in model output" -- a truncation
+# bug wearing a parsing bug's clothes. If you swap in another reasoning model,
+# check finish_reason before you trust this number.
+MAX_TOKENS = 1200
+
 MAX_ATTEMPTS = 3
 BACKOFF_S = (1.0, 2.0)  # waits between attempts 1->2 and 2->3
 # 15s, not 4s. Against the mock a 70B model looks instant; against the real

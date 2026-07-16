@@ -104,7 +104,7 @@ class Client:
                 "model": ep.model,
                 "messages": messages,
                 "temperature": 0,  # determinism: same prompt -> same answer
-                "max_tokens": 400,
+                "max_tokens": config.MAX_TOKENS,
             },
             headers={
                 "Authorization": f"Bearer {self._api_key}",
@@ -138,8 +138,23 @@ class Client:
                     u.get("prompt_tokens", 0),
                     u.get("completion_tokens", 0),
                 )
+                choice = body["choices"][0]
+
+                # A 200 that ran out of tokens is a failure wearing a success's
+                # status code. Say so here, at the source, rather than let a
+                # half-written JSON object explode in the parser later.
+                if choice.get("finish_reason") == "length":
+                    self._ev(step, "halt",
+                             f"200 but truncated at max_tokens="
+                             f"{config.MAX_TOKENS}  ✗ AGENT HALTED",
+                             attempt, 200, ep.model)
+                    raise AgentHalted(
+                        f"{step}: {ep.model} hit max_tokens={config.MAX_TOKENS} "
+                        f"mid-answer. Raise config.MAX_TOKENS -- reasoning models "
+                        f"spend tokens before they emit any answer.")
+
                 self._ev(step, "attempt", "200 OK  ✓", attempt, 200, ep.model)
-                return body["choices"][0]["message"]["content"]
+                return choice["message"]["content"]
 
             if not err and not _is_retryable(status):
                 self._ev(step, "halt", f"{status} (not retryable)  ✗ AGENT HALTED",
