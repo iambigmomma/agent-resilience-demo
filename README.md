@@ -59,7 +59,9 @@ doctl apps create-deployment <APP_ID>
 
 Without the key the app still boots and the MOCK toggle still works — that's
 your fallback if a key isn't available on stage. `make docker` runs the same
-image locally.
+image locally. Set a third SECRET, `DEMO_PASSWORD`, to put the public URL
+behind HTTP Basic auth (any username) — real credentials sit behind these
+endpoints and every Run spends real tokens. Unset means open, for local dev.
 
 The build is a `python:3.11-slim` base pinned **by digest**, installing
 `requirements.lock` with `--require-hashes`. If you regenerate that lock, read

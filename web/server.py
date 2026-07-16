@@ -355,3 +355,49 @@ app = Starlette(routes=[
     Route("/api/migrate", migrate_stream),
     Route("/healthz", health),
 ])
+
+
+class _BasicAuth:
+    """Password gate for the public deployment -- real API credentials sit
+    behind these endpoints and every Run spends real tokens.
+
+    - The password comes from $DEMO_PASSWORD (an App Platform SECRET, never
+      this repo). Unset means open: local dev and forks stay frictionless.
+    - /healthz stays unauthenticated, or App Platform's health check would
+      401 and restart the container forever.
+    - Plain HTTP Basic: the browser asks once per session and then attaches
+      credentials to every request, EventSource included -- no login page to
+      build, nothing for a presenter to fumble on stage.
+    """
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        pw = os.environ.get("DEMO_PASSWORD", "").strip()
+        if scope["type"] != "http" or not pw or scope["path"] == "/healthz":
+            return await self.inner(scope, receive, send)
+
+        import base64
+        import secrets as sec
+        auth = dict(scope.get("headers") or []).get(b"authorization", b"")
+        ok = False
+        if auth.startswith(b"Basic "):
+            try:
+                userpass = base64.b64decode(auth[6:]).decode()
+                candidate = userpass.split(":", 1)[1] if ":" in userpass else ""
+                ok = sec.compare_digest(candidate, pw)
+            except Exception:
+                ok = False
+        if ok:
+            return await self.inner(scope, receive, send)
+
+        await send({"type": "http.response.start", "status": 401, "headers": [
+            (b"www-authenticate", b'Basic realm="agent-resilience-demo"'),
+            (b"content-type", b"text/plain; charset=utf-8"),
+        ]})
+        await send({"type": "http.response.body",
+                    "body": b"password required (any username)"})
+
+
+app = _BasicAuth(app)

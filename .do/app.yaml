@@ -48,3 +48,9 @@ services:
         # different team makes the router invisible and every call 404s.
         # Needed only by the adoption scenario (it reorders the Inference
         # Router's ranking live). Failover scenario and MOCK work without it.
+      - key: DEMO_PASSWORD
+        scope: RUN_TIME
+        type: SECRET
+        # Optional password gate (HTTP Basic, any username). Set it on any
+        # public deployment -- real API credentials sit behind these endpoints
+        # and every Run spends real tokens. Unset = open (local dev, forks).
