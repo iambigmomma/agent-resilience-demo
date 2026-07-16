@@ -1,0 +1,6 @@
+# Direct dependencies only. The transitive closure with hashes is in
+# requirements.lock -- that is what actually gets installed, everywhere.
+httpx==0.28.1        # the whole client; DO speaks OpenAI wire format, so no SDK
+rich==14.2.0         # terminal lanes (make demo)
+starlette==0.49.3    # web dashboard + SSE (make web). No pydantic, no FastAPI.
+uvicorn==0.38.0      # ASGI server, also the App Platform entrypoint

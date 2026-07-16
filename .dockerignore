@@ -1,0 +1,11 @@
+# The Dockerfile COPYs an explicit allow-list, so this is belt and braces --
+# but it keeps the build context small and makes it impossible to ship a key
+# by accident if someone later loosens that COPY to `COPY . .`.
+.env
+.venv/
+__pycache__/
+*.pyc
+out/
+.git/
+.do/
+README.md

@@ -1,0 +1,8 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+
+# Run artifacts are per-run noise; keep the directory, not the contents.
+out/*
+!out/.keep

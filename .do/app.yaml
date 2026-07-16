@@ -1,0 +1,43 @@
+# DigitalOcean App Platform spec.
+#
+#   doctl apps create --spec .do/app.yaml
+#   doctl apps update <APP_ID> --spec .do/app.yaml
+#
+# The key is a SECRET-scoped env var, so it lives in App Platform and never in
+# this repo. Set its value in the dashboard or with `doctl`; do not paste it here.
+name: agent-resilience-demo
+region: nyc
+
+services:
+  - name: web
+    dockerfile_path: Dockerfile
+    source_dir: /
+    # A plain clone URL, not a `github:` block, so App Platform builds this
+    # without the DigitalOcean GitHub App being authorized on the repo. Fork it
+    # and change this one line. (Trade-off: no deploy-on-push. Re-deploy with
+    # `doctl apps create-deployment <APP_ID>`.)
+    git:
+      repo_clone_url: https://github.com/iambigmomma/agent-resilience-demo.git
+      branch: main
+
+    http_port: 8080
+    # One instance. The injector's counters live in process memory, so two
+    # instances behind the load balancer would each hold their own schedule and
+    # a reload could bounce you to a different one mid-story.
+    instance_count: 1
+    instance_size_slug: apps-s-1vcpu-1gb
+
+    health_check:
+      http_path: /healthz
+      # /healthz deliberately does not call the model. A rate-limited upstream
+      # is the thing we are demonstrating -- it must not restart the container.
+      initial_delay_seconds: 10
+      period_seconds: 15
+
+    envs:
+      - key: DIGITALOCEAN_INFERENCE_KEY
+        scope: RUN_TIME
+        type: SECRET
+        # value: set via dashboard / `doctl apps update`, never committed.
+        # Without it the app still boots and the MOCK toggle still works --
+        # which is the offline fallback if a live key is unavailable on stage.

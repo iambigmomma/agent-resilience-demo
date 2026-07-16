@@ -1,0 +1,102 @@
+"""Every tunable in the demo lives here.
+
+If you fork this repo to show your own scenario, this file plus `agent.py`'s
+CORPUS/PROMPTS should be the only things you need to touch.
+"""
+
+from __future__ import annotations
+
+# --- Python -----------------------------------------------------------------
+# Pinned because the demo must behave identically on a stranger's laptop.
+# 3.11 is the floor: we rely on tomllib-era stdlib and modern typing syntax.
+PYTHON_MIN = (3, 11)
+
+# --- Upstream ---------------------------------------------------------------
+# DigitalOcean Serverless Inference speaks the OpenAI chat-completions wire
+# format, which is why this whole demo is ~400 lines of httpx and no SDK.
+DO_INFERENCE_BASE_URL = "https://inference.do-ai.run/v1"
+API_KEY_ENV = "DIGITALOCEAN_INFERENCE_KEY"
+
+# --- Model pins -------------------------------------------------------------
+# Pinned to exact IDs, not aliases: an alias that silently re-points would make
+# the demo non-reproducible, which is the one thing this repo is selling.
+#
+# PRIMARY: llama3.3-70b-instruct
+#   Chosen because it is DO-hosted, open-weight (no commercial gating, so anyone
+#   can run this cold), and strong enough that the 3-step task genuinely works.
+#   It plays the role of "the one endpoint you bet the whole product on."
+PRIMARY_MODEL = "llama3.3-70b-instruct"
+#
+# ALT: openai-gpt-oss-20b
+#   Chosen because it is a *different model family from a different lab*, also
+#   DO-hosted. That matters: failing over to a second copy of the same model
+#   behind the same vendor is not resilience, it is a retry with extra steps.
+#   The routed lane's whole claim is that it can cross a backend boundary.
+#
+#   NOT gpt-oss-120b, which was the original pin: on 2026-07-16 it was serving
+#   real 429 "Platform overloaded" and took the routed lane down with it. A
+#   failover target that is itself degraded is not a failover target. `make
+#   models` only proves an ID exists -- `make health` proves it answers.
+#   Spare, verified healthy the same day, if 20b ever sulks: mistral-3-14B.
+ALT_MODEL = "openai-gpt-oss-20b"
+
+# Cost estimate only. DigitalOcean does not publish per-model token pricing in
+# the model catalog, so these are ROUGH placeholders so the summary block has a
+# number in it. Edit before you quote this to a customer.
+PRICE_PER_MTOK = {
+    PRIMARY_MODEL: {"in": 0.65, "out": 0.65},
+    ALT_MODEL: {"in": 0.10, "out": 0.10},
+}
+PRICING_IS_ESTIMATE = True
+
+# --- Local demo plumbing ----------------------------------------------------
+PROXY_HOST, PROXY_PORT = "127.0.0.1", 8900
+MOCK_HOST, MOCK_PORT = "127.0.0.1", 8901
+PROXY_BASE_URL = f"http://{PROXY_HOST}:{PROXY_PORT}"
+MOCK_BASE_URL = f"http://{MOCK_HOST}:{MOCK_PORT}/v1"
+
+# --- Fault injection defaults (overridable from the Makefile) ---------------
+FAIL_AFTER = 1  # per lane: request #1 (retrieve) succeeds, #2 (summarize) breaks
+FAIL_DURATION_S = 60.0
+FAIL_MODE = "429"  # one of: 429 | timeout | 5xx
+FAIL_ALIAS = "primary"  # only the primary backend is sick; the alt is healthy
+
+# --- Retry / routing policy -------------------------------------------------
+# ONE policy, shared by both lanes. Read client.py: there is no `if lane ==`
+# anywhere. The lanes differ only in how many candidate endpoints they hand in.
+MAX_ATTEMPTS = 3
+BACKOFF_S = (1.0, 2.0)  # waits between attempts 1->2 and 2->3
+# 15s, not 4s. Against the mock a 70B model looks instant; against the real
+# thing it took 2.4s for ten tokens, and 4s turned normal latency into a fake
+# ReadTimeout that silently ate a fault-injector count and desynced the demo.
+# Tune this to your slowest real model, not to your mock.
+REQUEST_TIMEOUT_S = 15.0
+
+# Determinism guard, asserted at startup by runner.py.
+#
+# The failure window is wall-clock (`--fail-duration`), but the outcome must not
+# be. So we require the window to strictly outlast the single lane's ENTIRE
+# retry budget. If the window can't close mid-retry, the single lane always
+# halts and the routed lane always survives -- on any machine, at any speed.
+_WORST_CASE_SINGLE_LANE_S = MAX_ATTEMPTS * REQUEST_TIMEOUT_S + sum(BACKOFF_S)
+
+
+def assert_deterministic(fail_duration: float | None = None) -> None:
+    """Check the duration ACTUALLY in force, not just this module's default.
+
+    Checking the default was a bug: `make demo FAIL_DURATION=20` sailed past it
+    and then raced the clock anyway. Whoever owns the real value passes it here.
+    """
+    d = FAIL_DURATION_S if fail_duration is None else fail_duration
+    if d <= _WORST_CASE_SINGLE_LANE_S:
+        raise SystemExit(
+            f"\n  fail-duration={d}s must exceed the single lane's worst-case "
+            f"retry budget ({_WORST_CASE_SINGLE_LANE_S}s = {MAX_ATTEMPTS} attempts "
+            f"x {REQUEST_TIMEOUT_S}s timeout + {sum(BACKOFF_S)}s backoff).\n"
+            f"  Otherwise the fault window can close mid-retry and the single "
+            f"lane sometimes survives -- the demo stops being reproducible.\n"
+        )
+
+
+# --- Artifacts --------------------------------------------------------------
+OUT_DIR = "out"
